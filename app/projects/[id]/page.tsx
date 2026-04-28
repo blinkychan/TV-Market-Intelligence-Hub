@@ -6,6 +6,8 @@ import { StatusBadge } from "@/components/ui/badge";
 import { prisma } from "@/lib/prisma";
 import { formatDate, humanize } from "@/lib/utils";
 
+export const dynamic = "force-dynamic";
+
 export default async function ProjectDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const project = await prisma.project.findUnique({

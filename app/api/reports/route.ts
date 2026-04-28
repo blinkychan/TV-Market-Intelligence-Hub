@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { generateWeeklyReportPayload } from "@/lib/weekly-report";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 function filename(title: string, extension: string) {
   return `${title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}.${extension}`;

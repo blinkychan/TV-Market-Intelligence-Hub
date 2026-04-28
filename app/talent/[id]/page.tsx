@@ -4,6 +4,8 @@ import { toRelationshipProject } from "@/lib/relationship-adapters";
 import { mockPersonDetails } from "@/lib/mock-relationships";
 import { prisma } from "@/lib/prisma";
 
+export const dynamic = "force-dynamic";
+
 async function getPerson(id: string) {
   try {
     const person = await prisma.person.findUnique({

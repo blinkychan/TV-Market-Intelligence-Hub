@@ -3,6 +3,8 @@ import type { BuyerListItem } from "@/components/buyers/types";
 import { mockBuyerList } from "@/lib/mock-buyers";
 import { prisma } from "@/lib/prisma";
 
+export const dynamic = "force-dynamic";
+
 async function getBuyers(): Promise<{ buyers: BuyerListItem[]; dataSource: "database" | "mock"; errorMessage?: string }> {
   try {
     const [buyers, currentShows] = await Promise.all([

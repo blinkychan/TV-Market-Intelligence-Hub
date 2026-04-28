@@ -24,6 +24,8 @@ import { mockReviewArticles } from "@/lib/mock-review";
 import { prisma } from "@/lib/prisma";
 import { cn, formatDate, humanize } from "@/lib/utils";
 
+export const dynamic = "force-dynamic";
+
 type SearchParams = Promise<{ articleId?: string; status?: string; q?: string }>;
 
 type ReviewArticle = {

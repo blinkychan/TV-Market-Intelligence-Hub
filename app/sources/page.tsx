@@ -10,6 +10,8 @@ import { mockFeeds, mockIngestionRuns } from "@/lib/mock-sources";
 import { prisma } from "@/lib/prisma";
 import { formatDate, humanize } from "@/lib/utils";
 
+export const dynamic = "force-dynamic";
+
 type FeedRecord = {
   id: string;
   publicationName: string;

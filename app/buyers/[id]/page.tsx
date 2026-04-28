@@ -12,6 +12,8 @@ import type {
 import { mockBuyerDetails } from "@/lib/mock-buyers";
 import { prisma } from "@/lib/prisma";
 
+export const dynamic = "force-dynamic";
+
 type BuyerDetailProjectPayload = Prisma.ProjectGetPayload<{
   include: {
     studio: true;

@@ -3,6 +3,8 @@ import { mockBuyerDetails } from "@/lib/mock-buyers";
 import { mockCurrentShows } from "@/lib/mock-current-tv";
 import { prisma } from "@/lib/prisma";
 
+export const dynamic = "force-dynamic";
+
 async function getCurrentShows(): Promise<{ rows: CurrentTvRow[]; dataSource: "database" | "mock"; errorMessage?: string }> {
   try {
     const [shows, buyers] = await Promise.all([

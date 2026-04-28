@@ -2,18 +2,43 @@ import Link from "next/link";
 import { ArrowUpRight, Building2, ClipboardList, FileText, Radio, UsersRound } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ButtonLink } from "@/components/ui/button";
+import { mockBuyerDetails } from "@/lib/mock-buyers";
+import { mockCurrentShows } from "@/lib/mock-current-tv";
+import { mockRelationshipIndex } from "@/lib/mock-relationships";
+import { mockReviewArticles } from "@/lib/mock-review";
 import { prisma } from "@/lib/prisma";
 
+export const dynamic = "force-dynamic";
+
+async function getDashboardCounts() {
+  try {
+    const [totalProjects, activeProjects, currentShows, buyers, companies, people, reviewItems] = await Promise.all([
+      prisma.project.count(),
+      prisma.project.count({ where: { status: { in: ["sold", "in_development", "pilot_order", "series_order"] } } }),
+      prisma.currentShow.count(),
+      prisma.buyer.count(),
+      prisma.company.count(),
+      prisma.person.count(),
+      prisma.article.count({ where: { needsReview: true } })
+    ]);
+
+    return { totalProjects, activeProjects, currentShows, buyers, companies, people, reviewItems };
+  } catch {
+    const mockProjects = mockBuyerDetails.flatMap((buyer) => buyer.projects);
+    return {
+      totalProjects: mockProjects.length,
+      activeProjects: mockProjects.filter((project) => ["sold", "in_development", "pilot_order", "series_order"].includes(project.status)).length,
+      currentShows: mockCurrentShows.length,
+      buyers: mockBuyerDetails.length,
+      companies: mockRelationshipIndex.companies.length,
+      people: mockRelationshipIndex.people.length,
+      reviewItems: mockReviewArticles.filter((article) => article.extractionStatus === "Needs Review" || article.extractionStatus === "New").length
+    };
+  }
+}
+
 export default async function DashboardPage() {
-  const [totalProjects, activeProjects, currentShows, buyers, companies, people, reviewItems] = await Promise.all([
-    prisma.project.count(),
-    prisma.project.count({ where: { status: { in: ["sold", "in_development", "pilot_order", "series_order"] } } }),
-    prisma.currentShow.count(),
-    prisma.buyer.count(),
-    prisma.company.count(),
-    prisma.person.count(),
-    prisma.article.count({ where: { needsReview: true } })
-  ]);
+  const { totalProjects, activeProjects, currentShows, buyers, companies, people, reviewItems } = await getDashboardCounts();
 
   const dashboardCards = [
     {

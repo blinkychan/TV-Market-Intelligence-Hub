@@ -9,6 +9,8 @@ import { prisma } from "@/lib/prisma";
 import { formatDate } from "@/lib/utils";
 import { generateWeeklyReportPayload, getDefaultFriday } from "@/lib/weekly-report";
 
+export const dynamic = "force-dynamic";
+
 export default async function WeeklyReportsPage({
   searchParams
 }: {

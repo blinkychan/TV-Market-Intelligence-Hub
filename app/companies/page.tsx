@@ -3,6 +3,8 @@ import type { RelationshipIndexData } from "@/components/relationships/types";
 import { mockRelationshipIndex } from "@/lib/mock-relationships";
 import { prisma } from "@/lib/prisma";
 
+export const dynamic = "force-dynamic";
+
 async function getRelationshipData(): Promise<{ data: RelationshipIndexData; dataSource: "database" | "mock"; errorMessage?: string }> {
   try {
     const [companies, people, projects, buyers] = await Promise.all([

@@ -1,11 +1,81 @@
 import { DevelopmentTable } from "@/components/tables/development-table";
+import type { DevelopmentRow } from "@/components/tables/development-table";
+import { mockBuyerDetails } from "@/lib/mock-buyers";
 import { prisma } from "@/lib/prisma";
 
+export const dynamic = "force-dynamic";
+
+function getMockRows(): DevelopmentRow[] {
+  return mockBuyerDetails.flatMap((buyer) =>
+    buyer.projects.map((project) => ({
+      id: project.id,
+      title: project.title,
+      type: project.type,
+      status: project.status,
+      logline: null,
+      genre: project.genre,
+      format: null,
+      buyerId: buyer.id,
+      buyer: buyer.name,
+      networkOrPlatform: buyer.name,
+      studio: project.studio,
+      productionCompanies: project.productionCompanies,
+      people: project.people,
+      countryOfOrigin: project.countryOfOrigin,
+      isInternational: project.isInternational,
+      isCoProduction: project.isCoProduction,
+      isAcquisition: project.isAcquisition,
+      announcementDate: project.announcementDate,
+      lastUpdateDate: project.lastUpdateDate,
+      sourceUrl: project.sourceUrl,
+      sourcePublication: null,
+      confidenceScore: 0.75,
+      needsReview: project.status === "stale",
+      notes: project.notes
+    }))
+  );
+}
+
+async function getDevelopmentRows(): Promise<DevelopmentRow[]> {
+  try {
+    const projects = await prisma.project.findMany({
+      include: { buyer: true, studio: true, productionCompanies: true, people: true },
+      orderBy: [{ announcementDate: "desc" }, { title: "asc" }]
+    });
+
+    return projects.map((project) => ({
+      id: project.id,
+      title: project.title,
+      type: project.type,
+      status: project.status,
+      logline: project.logline,
+      genre: project.genre,
+      format: project.format,
+      buyerId: project.buyerId,
+      buyer: project.buyer?.name ?? null,
+      networkOrPlatform: project.networkOrPlatform,
+      studio: project.studio?.name ?? null,
+      productionCompanies: project.productionCompanies.map((company) => company.name),
+      people: project.people.map((person) => person.name),
+      countryOfOrigin: project.countryOfOrigin,
+      isInternational: project.isInternational,
+      isCoProduction: project.isCoProduction,
+      isAcquisition: project.isAcquisition,
+      announcementDate: project.announcementDate?.toISOString() ?? null,
+      lastUpdateDate: project.lastUpdateDate?.toISOString() ?? null,
+      sourceUrl: project.sourceUrl,
+      sourcePublication: project.sourcePublication,
+      confidenceScore: project.confidenceScore,
+      needsReview: project.needsReview,
+      notes: project.notes
+    }));
+  } catch {
+    return getMockRows();
+  }
+}
+
 export default async function DevelopmentPage() {
-  const projects = await prisma.project.findMany({
-    include: { buyer: true, studio: true, productionCompanies: true, people: true },
-    orderBy: [{ announcementDate: "desc" }, { title: "asc" }]
-  });
+  const rows = await getDevelopmentRows();
 
   return (
     <div className="space-y-5">
@@ -16,34 +86,7 @@ export default async function DevelopmentPage() {
           Search and filter development projects by buyer, studio, genre, year, country, status, and market flags.
         </p>
       </section>
-      <DevelopmentTable
-        rows={projects.map((project) => ({
-          id: project.id,
-          title: project.title,
-          type: project.type,
-          status: project.status,
-          logline: project.logline,
-          genre: project.genre,
-          format: project.format,
-          buyerId: project.buyerId,
-          buyer: project.buyer?.name ?? null,
-          networkOrPlatform: project.networkOrPlatform,
-          studio: project.studio?.name ?? null,
-          productionCompanies: project.productionCompanies.map((company) => company.name),
-          people: project.people.map((person) => person.name),
-          countryOfOrigin: project.countryOfOrigin,
-          isInternational: project.isInternational,
-          isCoProduction: project.isCoProduction,
-          isAcquisition: project.isAcquisition,
-          announcementDate: project.announcementDate?.toISOString() ?? null,
-          lastUpdateDate: project.lastUpdateDate?.toISOString() ?? null,
-          sourceUrl: project.sourceUrl,
-          sourcePublication: project.sourcePublication,
-          confidenceScore: project.confidenceScore,
-          needsReview: project.needsReview,
-          notes: project.notes
-        }))}
-      />
+      <DevelopmentTable rows={rows} />
     </div>
   );
 }
