@@ -1,37 +1,10 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { BuyerType, CompanyType, PersonRole, ProjectStatus, ProjectType } from "@prisma/client";
 import { extractStructuredTVData, type StructuredTVExtraction } from "@/lib/extraction";
 import { updateMockReviewArticle } from "@/lib/mock-preview-store";
 import { prisma } from "@/lib/prisma";
-
-const validProjectStatuses = new Set([
-  "sold",
-  "in_development",
-  "pilot_order",
-  "series_order",
-  "airing",
-  "renewed",
-  "canceled",
-  "passed",
-  "stale",
-  "unknown"
-]);
-
-const validProjectTypes = new Set([
-  "scripted",
-  "unscripted",
-  "animation",
-  "limited_series",
-  "format",
-  "international",
-  "acquisition",
-  "co_production"
-]);
-
-const validBuyerTypes = new Set(["broadcast", "cable", "streamer", "studio", "distributor"]);
-const validCompanyTypes = new Set(["studio", "production_company", "distributor", "agency", "management_company"]);
-const validPersonRoles = new Set(["writer", "creator", "showrunner", "producer", "actor", "executive", "director"]);
 
 function parseDate(value: FormDataEntryValue | null) {
   const stringValue = String(value ?? "").trim();
@@ -47,46 +20,95 @@ function parseCsv(value: FormDataEntryValue | null) {
     .filter(Boolean);
 }
 
-function deriveProjectType(category?: string | null) {
+function deriveProjectType(category?: string | null): ProjectType {
   const normalized = (category ?? "").toLowerCase().replaceAll(" ", "_").replaceAll("-", "_");
-  if (normalized.includes("acquisition")) return "acquisition";
-  if (normalized.includes("co_production")) return "co_production";
-  if (normalized.includes("international")) return "international";
-  return "scripted";
+  if (normalized.includes("acquisition")) return ProjectType.acquisition;
+  if (normalized.includes("co_production")) return ProjectType.co_production;
+  if (normalized.includes("international")) return ProjectType.international;
+  if (normalized.includes("animation")) return ProjectType.animation;
+  if (normalized.includes("limited")) return ProjectType.limited_series;
+  if (normalized.includes("format")) return ProjectType.format;
+  if (normalized.includes("unscripted")) return ProjectType.unscripted;
+  return ProjectType.scripted;
 }
 
-function deriveProjectStatus(status?: string | null) {
+function deriveProjectStatus(status?: string | null): ProjectStatus {
   const normalized = String(status ?? "").trim();
-  return validProjectStatuses.has(normalized) ? normalized : "unknown";
+  switch (normalized) {
+    case ProjectStatus.sold:
+      return ProjectStatus.sold;
+    case ProjectStatus.in_development:
+      return ProjectStatus.in_development;
+    case ProjectStatus.pilot_order:
+      return ProjectStatus.pilot_order;
+    case ProjectStatus.series_order:
+      return ProjectStatus.series_order;
+    case ProjectStatus.airing:
+      return ProjectStatus.airing;
+    case ProjectStatus.renewed:
+      return ProjectStatus.renewed;
+    case ProjectStatus.canceled:
+      return ProjectStatus.canceled;
+    case ProjectStatus.passed:
+      return ProjectStatus.passed;
+    case ProjectStatus.stale:
+      return ProjectStatus.stale;
+    default:
+      return ProjectStatus.unknown;
+  }
 }
 
-function deriveBuyerType(name?: string | null) {
+function deriveBuyerType(name?: string | null): BuyerType {
   const normalized = (name ?? "").toLowerCase();
-  if (normalized.includes("tv+") || normalized.includes("netflix") || normalized.includes("peacock")) return "streamer";
-  if (normalized === "abc" || normalized === "bbc" || normalized === "cbc") return "broadcast";
-  if (normalized === "hbo" || normalized === "fx") return "cable";
-  if (normalized.includes("fremantle")) return "distributor";
-  return "streamer";
+  if (normalized.includes("tv+") || normalized.includes("netflix") || normalized.includes("peacock")) return BuyerType.streamer;
+  if (normalized === "abc" || normalized === "bbc" || normalized === "cbc") return BuyerType.broadcast;
+  if (normalized === "hbo" || normalized === "fx") return BuyerType.cable;
+  if (normalized.includes("fremantle")) return BuyerType.distributor;
+  return BuyerType.streamer;
 }
 
-function inferCompanyType(name?: string | null) {
+function inferCompanyType(name?: string | null): CompanyType {
   const normalized = (name ?? "").toLowerCase();
-  if (!normalized) return "production_company";
-  if (normalized.includes("television")) return "studio";
-  if (normalized.includes("agency")) return "agency";
-  if (normalized.includes("management")) return "management_company";
-  return "production_company";
+  if (!normalized) return CompanyType.production_company;
+  if (normalized.includes("television")) return CompanyType.studio;
+  if (normalized.includes("agency")) return CompanyType.agency;
+  if (normalized.includes("management")) return CompanyType.management_company;
+  if (normalized.includes("distribut")) return CompanyType.distributor;
+  return CompanyType.production_company;
 }
 
 function inferPersonRoleFromContext(article: {
   extractedStatus?: string | null;
   suspectedCategory?: string | null;
-}) {
+}): PersonRole {
   const text = `${article.extractedStatus ?? ""} ${article.suspectedCategory ?? ""}`.toLowerCase();
-  if (text.includes("casting")) return "actor";
-  if (text.includes("pilot")) return "showrunner";
-  if (text.includes("series")) return "producer";
-  return "creator";
+  if (text.includes("casting")) return PersonRole.actor;
+  if (text.includes("pilot")) return PersonRole.showrunner;
+  if (text.includes("series")) return PersonRole.producer;
+  return PersonRole.creator;
+}
+
+function normalizePersonRole(input?: string | null): PersonRole {
+  const normalized = String(input ?? "").trim().toLowerCase();
+
+  if (!normalized) return PersonRole.creator;
+  if (normalized === "writer") return PersonRole.writer;
+  if (normalized === "creator" || normalized === "co-creator" || normalized === "cocreator") return PersonRole.creator;
+  if (normalized === "showrunner") return PersonRole.showrunner;
+  if (normalized === "producer" || normalized === "executive producer" || normalized === "ep") return PersonRole.producer;
+  if (normalized === "actor" || normalized === "cast" || normalized === "talent") return PersonRole.actor;
+  if (normalized === "director") return PersonRole.director;
+  if (normalized === "executive") return PersonRole.executive;
+
+  if (normalized.includes("writer")) return PersonRole.writer;
+  if (normalized.includes("creator")) return PersonRole.creator;
+  if (normalized.includes("showrunner")) return PersonRole.showrunner;
+  if (normalized.includes("producer")) return PersonRole.producer;
+  if (normalized.includes("actor") || normalized.includes("cast") || normalized.includes("talent")) return PersonRole.actor;
+  if (normalized.includes("director")) return PersonRole.director;
+  if (normalized.includes("executive")) return PersonRole.executive;
+
+  return PersonRole.creator;
 }
 
 function mapArticleData(extraction: StructuredTVExtraction) {
@@ -154,7 +176,6 @@ async function createOrFindBuyer(name?: string | null) {
   if (existing) return existing;
 
   const type = deriveBuyerType(name);
-  if (!validBuyerTypes.has(type)) return null;
   return prisma.buyer.create({ data: { name, type } }).catch(() => null);
 }
 
@@ -168,7 +189,6 @@ async function createOrFindCompanies(names: string[]) {
     }
 
     const type = inferCompanyType(name);
-    if (!validCompanyTypes.has(type)) continue;
     const created = await prisma.company.create({ data: { name, type } }).catch(() => null);
     if (created) companies.push(created);
   }
@@ -178,7 +198,7 @@ async function createOrFindCompanies(names: string[]) {
 
 async function createOrFindPeople(names: string[], roleHint?: string | null) {
   const people = [];
-  const role = validPersonRoles.has(String(roleHint ?? "")) ? String(roleHint) : "creator";
+  const role = normalizePersonRole(roleHint);
 
   for (const name of names) {
     const existing = await prisma.person.findFirst({ where: { name } }).catch(() => null);
@@ -349,7 +369,7 @@ export async function createProjectFromArticle(formData: FormData) {
     const project = await prisma.project.create({
       data: {
         title,
-        type: validProjectTypes.has(deriveProjectType(article.suspectedCategory)) ? deriveProjectType(article.suspectedCategory) : "scripted",
+        type: deriveProjectType(article.suspectedCategory),
         status: deriveProjectStatus(article.extractedStatus),
         logline: article.extractedLogline,
         format: article.extractedFormat,
