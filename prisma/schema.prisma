@@ -1,0 +1,289 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum ProjectType {
+  scripted
+  unscripted
+  animation
+  limited_series
+  format
+  international
+  acquisition
+  co_production
+}
+
+enum ProjectStatus {
+  sold
+  in_development
+  pilot_order
+  series_order
+  airing
+  renewed
+  canceled
+  passed
+  stale
+  unknown
+}
+
+enum BuyerType {
+  broadcast
+  cable
+  streamer
+  studio
+  distributor
+}
+
+enum CompanyType {
+  studio
+  production_company
+  distributor
+  agency
+  management_company
+}
+
+enum PersonRole {
+  writer
+  creator
+  showrunner
+  producer
+  actor
+  executive
+  director
+}
+
+model Project {
+  id                    String         @id @default(cuid())
+  title                 String
+  type                  ProjectType
+  status                ProjectStatus
+  logline               String?
+  genre                 String?
+  format                String?
+  source_material       String?
+  buyerId               String?
+  buyer                 Buyer?         @relation(fields: [buyerId], references: [id])
+  networkOrPlatform     String?
+  studioId              String?
+  studio                Company?       @relation("StudioProjects", fields: [studioId], references: [id])
+  productionCompanies   Company[]      @relation("ProjectProductionCompanies")
+  people                Person[]       @relation("ProjectPeople")
+  countryOfOrigin       String?
+  isInternational       Boolean        @default(false)
+  isCoProduction        Boolean        @default(false)
+  isAcquisition         Boolean        @default(false)
+  acquisitionDetails    String?
+  announcementDate      DateTime?
+  premiereDate          DateTime?
+  lastUpdateDate        DateTime?
+  sourceUrl             String?
+  sourcePublication     String?
+  confidenceScore       Float          @default(0.7)
+  needsReview           Boolean        @default(false)
+  notes                 String?
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+  relationships         Relationship[]
+  linkedArticles        Article[]      @relation("LinkedProjectArticles")
+
+  @@index([title])
+  @@index([buyerId])
+  @@index([studioId])
+  @@index([status])
+  @@index([genre])
+  @@index([countryOfOrigin])
+  @@index([announcementDate])
+  @@index([premiereDate])
+}
+
+model CurrentShow {
+  id                    String   @id @default(cuid())
+  title                 String
+  networkOrPlatform     String
+  premiereDate          DateTime?
+  finaleDate            DateTime?
+  seasonNumber          Int?
+  episodeCount          Int?
+  status                String
+  genre                 String?
+  studio                String?
+  productionCompanies   String?
+  country               String?
+  sourceUrl             String?
+  notes                 String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+  linkedArticles        Article[] @relation("LinkedShowArticles")
+
+  @@index([premiereDate])
+  @@index([finaleDate])
+  @@index([networkOrPlatform])
+  @@index([status])
+  @@index([genre])
+}
+
+model Buyer {
+  id            String         @id @default(cuid())
+  name          String         @unique
+  type          BuyerType
+  parentCompany String?
+  notes         String?
+  projects      Project[]
+  relationships Relationship[]
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  @@index([type])
+  @@index([parentCompany])
+}
+
+model Company {
+  id                     String         @id @default(cuid())
+  name                   String         @unique
+  type                   CompanyType
+  notes                  String?
+  studioProjects         Project[]      @relation("StudioProjects")
+  productionProjects     Project[]      @relation("ProjectProductionCompanies")
+  relationships          Relationship[]
+  createdAt              DateTime       @default(now())
+  updatedAt              DateTime       @updatedAt
+
+  @@index([type])
+}
+
+model Person {
+  id            String         @id @default(cuid())
+  name          String         @unique
+  role          PersonRole
+  company       String?
+  reps          String?
+  notes         String?
+  projects      Project[]      @relation("ProjectPeople")
+  relationships Relationship[]
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  @@index([role])
+  @@index([company])
+}
+
+model Article {
+  id                    String       @id @default(cuid())
+  url                   String       @unique
+  publication           String?
+  headline              String
+  publishedDate         DateTime?
+  summary               String?
+  rawText               String?
+  sourceType            String?
+  ingestionSource       String?
+  needsReview           Boolean      @default(true)
+  extractionStatus      String       @default("Needs Review")
+  extractionMode        String?
+  suspectedCategory     String?
+  linkedProjectId       String?
+  linkedProject         Project?     @relation("LinkedProjectArticles", fields: [linkedProjectId], references: [id])
+  linkedShowId          String?
+  linkedShow            CurrentShow? @relation("LinkedShowArticles", fields: [linkedShowId], references: [id])
+  confidenceScore       Float?
+  extractedProjectTitle String?
+  extractedFormat       String?
+  extractedStatus       String?
+  extractedLogline      String?
+  extractedBuyer        String?
+  extractedStudio       String?
+  extractedCompanies    String?
+  extractedPeople       String?
+  extractedCountry      String?
+  extractedPremiereDate DateTime?
+  extractedAnnouncementDate DateTime?
+  extractedRelationships String?
+  extractedFieldsNeedingReview String?
+  extractedDeduplicationNotes String?
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+
+  @@index([publication])
+  @@index([publishedDate])
+  @@index([needsReview])
+  @@index([ingestionSource])
+  @@index([extractionStatus])
+  @@index([extractionMode])
+  @@index([suspectedCategory])
+  @@index([linkedProjectId])
+  @@index([linkedShowId])
+}
+
+model RssFeed {
+  id              String   @id @default(cuid())
+  publicationName String
+  feedUrl         String   @unique
+  category        String
+  enabled         Boolean  @default(true)
+  lastChecked     DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([publicationName])
+  @@index([category])
+  @@index([enabled])
+  @@index([lastChecked])
+}
+
+model IngestionRun {
+  id           String   @id @default(cuid())
+  sourceType   String
+  sourceName   String?
+  status       String
+  itemsFetched Int      @default(0)
+  itemsSaved   Int      @default(0)
+  itemsSkipped Int      @default(0)
+  startedAt    DateTime @default(now())
+  completedAt  DateTime?
+  notes        String?
+
+  @@index([sourceType])
+  @@index([status])
+  @@index([startedAt])
+  @@index([completedAt])
+}
+
+model Relationship {
+  id               String    @id @default(cuid())
+  buyerId          String?
+  buyer            Buyer?    @relation(fields: [buyerId], references: [id])
+  companyId        String?
+  company          Company?  @relation(fields: [companyId], references: [id])
+  personId         String?
+  person           Person?   @relation(fields: [personId], references: [id])
+  projectId        String?
+  project          Project?  @relation(fields: [projectId], references: [id])
+  relationshipType String
+  sourceUrl        String?
+  date             DateTime?
+  createdAt        DateTime  @default(now())
+
+  @@index([relationshipType])
+  @@index([date])
+  @@index([buyerId])
+  @@index([companyId])
+  @@index([personId])
+  @@index([projectId])
+}
+
+model WeeklyReport {
+  id                String   @id @default(cuid())
+  weekStart         DateTime
+  weekEnd           DateTime
+  title             String
+  generatedMarkdown String
+  generatedAt       DateTime @default(now())
+
+  @@index([weekStart])
+  @@index([generatedAt])
+}
