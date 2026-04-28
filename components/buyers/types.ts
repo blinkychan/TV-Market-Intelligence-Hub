@@ -17,6 +17,8 @@ export type BuyerProjectSummary = {
   notes: string | null;
 };
 
+export type BuyerProject = BuyerProjectSummary;
+
 export type BuyerCurrentShowSummary = {
   id: string;
   title: string;
@@ -33,6 +35,8 @@ export type BuyerCurrentShowSummary = {
   sourceUrl: string | null;
   notes: string | null;
 };
+
+export type BuyerCurrentShow = BuyerCurrentShowSummary;
 
 export type BuyerCompanySummary = {
   id: string;
