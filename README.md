@@ -1,6 +1,6 @@
 # TV Market Intelligence Hub
 
-Local-first internal web app shell for an entertainment-industry intelligence dashboard.
+Local-first internal web app shell for an entertainment-industry intelligence dashboard, configured to use Prisma with Supabase Postgres.
 
 This build includes the local app foundation, core Prisma schema, seeded development data, and dashboard database counts:
 
@@ -9,10 +9,10 @@ This build includes the local app foundation, core Prisma schema, seeded develop
 - Tailwind
 - shadcn/ui-style local components
 - Prisma
-- SQLite
+- Supabase Postgres
 - Sidebar navigation
 - Development, Current TV, and Weekly Reports feature pages
-- Local database setup
+- Local database setup with hosted Postgres
 
 ## Pages
 
@@ -33,28 +33,36 @@ Install dependencies:
 npm install
 ```
 
-Create the environment file:
+Create the local environment file:
 
 ```bash
-cp .env.example .env
+cp .env.example .env.local
 ```
 
-Create the local SQLite database:
+In Supabase, open:
 
-```bash
-npm run db:push
+`Connect` -> `ORM / Third Party Library` -> `Prisma`
+
+Copy the Prisma connection strings and paste them into `.env.local`:
+
+```env
+DATABASE_URL=
+DIRECT_URL=
+NEXT_PUBLIC_APP_URL=http://localhost:3000
 ```
 
-Run Prisma migrations:
+Replace `[YOUR-PASSWORD]` in the copied Supabase URLs.
+
+Push the Prisma schema to Supabase Postgres:
 
 ```bash
-npm run db:migrate
+npx prisma db push
 ```
 
-Seed the database:
+Seed the database if you want sample market data:
 
 ```bash
-npm run db:seed
+npx prisma db seed
 ```
 
 Run the app locally:
@@ -72,15 +80,16 @@ http://localhost:3000
 Open Prisma Studio:
 
 ```bash
-npm run db:studio
+npx prisma studio
 ```
 
 ## Database
 
-SQLite is configured through Prisma using:
+Prisma is configured for Supabase Postgres using:
 
 ```env
-DATABASE_URL="file:./dev.db"
+DATABASE_URL=
+DIRECT_URL=
 ```
 
 The schema includes the core future-facing tables:
@@ -103,4 +112,10 @@ Seed data includes:
 - 10 people
 - 20+ relationship records
 
-The schema is designed so the app can later migrate to Supabase/Postgres by changing the Prisma datasource provider and database URL.
+## Supabase Prisma Setup
+
+1. Copy Prisma connection strings from Supabase `Connect` -> `ORM / Third Party Library` -> `Prisma`.
+2. Paste them into `.env.local`.
+3. Replace `[YOUR-PASSWORD]`.
+4. Run `npx prisma db push`.
+5. Run `npx prisma db seed` if seed data is desired.

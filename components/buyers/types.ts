@@ -1,4 +1,4 @@
-export type BuyerProject = {
+export type BuyerProjectSummary = {
   id: string;
   title: string;
   status: string;
@@ -17,7 +17,7 @@ export type BuyerProject = {
   notes: string | null;
 };
 
-export type BuyerCurrentShow = {
+export type BuyerCurrentShowSummary = {
   id: string;
   title: string;
   networkOrPlatform: string;
@@ -34,14 +34,40 @@ export type BuyerCurrentShow = {
   notes: string | null;
 };
 
+export type BuyerCompanySummary = {
+  id: string;
+  name: string;
+  type: string;
+};
+
+export type BuyerPersonSummary = {
+  id: string;
+  name: string;
+  role: string;
+};
+
+export type BuyerRelationshipSummary = {
+  id: string;
+  relationshipType: string;
+  buyerId: string | null;
+  companyId: string | null;
+  personId: string | null;
+  projectId: string | null;
+  sourceUrl: string | null;
+  date: string | null;
+};
+
 export type BuyerDetailData = {
   id: string;
   name: string;
   type: string;
   parentCompany: string | null;
   notes: string | null;
-  projects: BuyerProject[];
-  currentShows: BuyerCurrentShow[];
+  projects: BuyerProjectSummary[];
+  currentShows: BuyerCurrentShowSummary[];
+  companies?: BuyerCompanySummary[];
+  people?: BuyerPersonSummary[];
+  relationships?: BuyerRelationshipSummary[];
 };
 
 export type BuyerListItem = {
