@@ -254,6 +254,28 @@ model IngestionRun {
   @@index([completedAt])
 }
 
+model BackfillJob {
+  id                String   @id @default(cuid())
+  source            String
+  year              Int
+  month             Int
+  keywords          String?
+  status            String   @default("queued")
+  articlesFound     Int      @default(0)
+  articlesSaved     Int      @default(0)
+  duplicatesSkipped Int      @default(0)
+  lastError         String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  completedAt       DateTime?
+
+  @@index([source])
+  @@index([year, month])
+  @@index([status])
+  @@index([createdAt])
+  @@index([completedAt])
+}
+
 model Relationship {
   id               String    @id @default(cuid())
   buyerId          String?

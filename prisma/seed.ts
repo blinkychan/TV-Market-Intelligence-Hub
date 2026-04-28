@@ -6,6 +6,7 @@ const date = (value: string) => new Date(`${value}T12:00:00.000Z`);
 
 async function main() {
   await prisma.relationship.deleteMany();
+  await prisma.backfillJob.deleteMany();
   await prisma.ingestionRun.deleteMany();
   await prisma.rssFeed.deleteMany();
   await prisma.weeklyReport.deleteMany();
@@ -507,15 +508,54 @@ async function main() {
         notes: "Editor submitted article for review queue triage."
       },
       {
-        sourceType: "backfill_placeholder",
+        sourceType: "backfill",
         sourceName: "2025 awards-season scan",
-        status: "draft",
+        status: "queued",
         itemsFetched: 0,
         itemsSaved: 0,
         itemsSkipped: 0,
         startedAt: date("2026-04-23"),
         completedAt: null,
-        notes: "Saved placeholder query for later batch processing."
+        notes: "Queued historical scan for later batch processing."
+      }
+    ]
+  });
+
+  await prisma.backfillJob.createMany({
+    data: [
+      {
+        source: "Deadline",
+        year: 2024,
+        month: 5,
+        keywords: "Keyword Set: Script sale | script sale; series order; drama | Category: development",
+        status: "queued",
+        articlesFound: 0,
+        articlesSaved: 0,
+        duplicatesSkipped: 0,
+        lastError: null
+      },
+      {
+        source: "Variety",
+        year: 2023,
+        month: 11,
+        keywords: "Keyword Set: Pilot order | pilot order; broadcast; family drama | Category: pilot order",
+        status: "queued",
+        articlesFound: 0,
+        articlesSaved: 0,
+        duplicatesSkipped: 0,
+        lastError: null
+      },
+      {
+        source: "The Hollywood Reporter",
+        year: 2025,
+        month: 2,
+        keywords: "Keyword Set: International co-production | international co-production; thriller",
+        status: "completed",
+        articlesFound: 2,
+        articlesSaved: 2,
+        duplicatesSkipped: 0,
+        lastError: null,
+        completedAt: date("2026-04-22")
       }
     ]
   });
