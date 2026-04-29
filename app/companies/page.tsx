@@ -2,6 +2,8 @@ import { RelationshipIndex } from "@/components/relationships/relationship-index
 import type { RelationshipIndexData } from "@/components/relationships/types";
 import { mockRelationshipIndex } from "@/lib/mock-relationships";
 import { prisma } from "@/lib/prisma";
+import { getSavedViewsForPage } from "@/lib/saved-views";
+import { getCurrentUserContext } from "@/lib/team-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -70,6 +72,11 @@ async function getRelationshipData(): Promise<{ data: RelationshipIndexData; dat
 
 export default async function CompaniesPage() {
   const { data, dataSource, errorMessage } = await getRelationshipData();
+  const auth = await getCurrentUserContext();
+  const [companySavedViews, peopleSavedViews] = await Promise.all([
+    getSavedViewsForPage("companies").catch(() => []),
+    getSavedViewsForPage("people").catch(() => [])
+  ]);
   return (
     <div className="space-y-6">
       <section className="rounded-lg border bg-white p-6 shadow-panel">
@@ -77,7 +84,16 @@ export default async function CompaniesPage() {
         <h1 className="mt-2 text-3xl font-semibold tracking-tight">Companies & Talent</h1>
         <p className="mt-3 max-w-3xl text-muted-foreground">Explore how buyers, studios, production companies, people, and projects connect.</p>
       </section>
-      <RelationshipIndex data={data} dataSource={dataSource} errorMessage={errorMessage} />
+      <RelationshipIndex
+        data={data}
+        dataSource={dataSource}
+        errorMessage={errorMessage}
+        companySavedViews={companySavedViews}
+        peopleSavedViews={peopleSavedViews}
+        currentUserEmail={auth.user?.email ?? null}
+        canCreateTeamView={auth.canEditContent || auth.adminUnlocked}
+        canManageAllSavedViews={auth.canManageUsers || auth.adminUnlocked}
+      />
     </div>
   );
 }

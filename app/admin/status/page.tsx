@@ -1,11 +1,13 @@
 import Link from "next/link";
 import { Activity, Database, FileText, Play, Radio, RefreshCcw, ShieldCheck } from "lucide-react";
 import { logoutAdmin } from "../login/actions";
+import { saveUserProfileAction } from "./actions";
+import { logoutTeamSession } from "@/app/login/actions";
 import { fetchArticleBodyAction, fetchBodiesForNeedsReview, fetchSelectedBodiesAction } from "@/app/review/actions";
 import { runRssIngestion } from "@/app/sources/actions";
 import { runNextBackfillJobAction } from "@/app/sources/backfill/actions";
-import { requireAdminPageAccess } from "@/lib/admin-auth";
 import { prisma } from "@/lib/prisma";
+import { getCurrentUserContext, requireAdminCapabilityAccess } from "@/lib/team-auth";
 import { formatDate } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -31,6 +33,12 @@ type StatusSnapshot = {
     bodyFetchStatus: string | null;
     publishedDate: Date | null;
   }>;
+  userProfiles: Array<{
+    id: string;
+    email: string;
+    role: "admin" | "editor" | "viewer";
+    updatedAt: Date;
+  }>;
   emptyDatabase: boolean;
   databaseError: string | null;
 };
@@ -49,7 +57,7 @@ async function getStatusSnapshot(): Promise<StatusSnapshot> {
   try {
     await prisma.$queryRaw`SELECT 1`;
 
-    const [articleCount, projectCount, currentShowCount, reviewQueueCount, latestRssRun, latestBackfillRun, latestBodyFetchRun, reviewArticles] =
+    const [articleCount, projectCount, currentShowCount, reviewQueueCount, latestRssRun, latestBackfillRun, latestBodyFetchRun, reviewArticles, userProfiles] =
       await Promise.all([
         prisma.article.count(),
         prisma.project.count(),
@@ -81,6 +89,10 @@ async function getStatusSnapshot(): Promise<StatusSnapshot> {
             bodyFetchStatus: true,
             publishedDate: true
           }
+        }),
+        prisma.userProfile.findMany({
+          orderBy: [{ role: "asc" }, { email: "asc" }],
+          select: { id: true, email: true, role: true, updatedAt: true }
         })
       ]);
 
@@ -95,6 +107,7 @@ async function getStatusSnapshot(): Promise<StatusSnapshot> {
       latestBackfillRun,
       latestBodyFetchRun,
       reviewArticles,
+      userProfiles,
       emptyDatabase: articleCount + projectCount + currentShowCount === 0,
       databaseError: null
     };
@@ -110,6 +123,7 @@ async function getStatusSnapshot(): Promise<StatusSnapshot> {
       latestBackfillRun: null,
       latestBodyFetchRun: null,
       reviewArticles: [],
+      userProfiles: [],
       emptyDatabase: true,
       databaseError: error instanceof Error ? error.message : "Unknown database error."
     };
@@ -134,8 +148,9 @@ function RunMeta({ label, run }: { label: string; run: StatusSnapshot["latestRss
 }
 
 export default async function AdminStatusPage() {
-  await requireAdminPageAccess("/admin/status");
+  await requireAdminCapabilityAccess();
   const snapshot = await getStatusSnapshot();
+  const auth = await getCurrentUserContext();
 
   return (
     <div className="space-y-6">
@@ -153,9 +168,16 @@ export default async function AdminStatusPage() {
               Database: {snapshot.databaseConnected ? "Connected" : "Disconnected"}
             </Badge>
             <Badge className="bg-sky-50 text-sky-700 ring-sky-200">Environment: {snapshot.appEnvironment}</Badge>
-            <form action={logoutAdmin}>
-              <Button type="submit" variant="secondary">Log out</Button>
-            </form>
+            {auth.sessionSource === "supabase" ? (
+              <form action={logoutTeamSession}>
+                <Button type="submit" variant="secondary">Team log out</Button>
+              </form>
+            ) : null}
+            {auth.adminUnlocked ? (
+              <form action={logoutAdmin}>
+                <Button type="submit" variant="secondary">End admin unlock</Button>
+              </form>
+            ) : null}
           </div>
         </div>
       </section>
@@ -172,6 +194,10 @@ export default async function AdminStatusPage() {
               DATABASE_URL=...
               <br />
               DIRECT_URL=...
+              <br />
+              NEXT_PUBLIC_SUPABASE_URL=...
+              <br />
+              NEXT_PUBLIC_SUPABASE_ANON_KEY=...
               <br />
               NEXT_PUBLIC_APP_URL=...
               <br />
@@ -328,6 +354,58 @@ export default async function AdminStatusPage() {
         </Card>
       </div>
 
+      <Card className="shadow-panel">
+        <CardHeader>
+          <CardTitle>Team Roles</CardTitle>
+          <p className="text-sm text-muted-foreground">Approved access is granted by matching Supabase Auth email addresses to this role list.</p>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <form action={saveUserProfileAction} className="grid gap-3 rounded-lg border bg-slate-50 p-4 md:grid-cols-[1.2fr_0.6fr_auto]">
+            <input
+              name="email"
+              type="email"
+              placeholder="teammate@company.com"
+              className="h-9 w-full rounded-md border bg-white px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
+            />
+            <Select name="role" defaultValue="viewer">
+              <option value="admin">admin</option>
+              <option value="editor">editor</option>
+              <option value="viewer">viewer</option>
+            </Select>
+            <Button type="submit">Add / Update User</Button>
+          </form>
+
+          {snapshot.userProfiles.length ? (
+            <div className="overflow-x-auto rounded-lg border">
+              <table className="min-w-full divide-y divide-slate-200 text-sm">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="px-4 py-3 text-left font-medium text-muted-foreground">Email</th>
+                    <th className="px-4 py-3 text-left font-medium text-muted-foreground">Role</th>
+                    <th className="px-4 py-3 text-left font-medium text-muted-foreground">Updated</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200">
+                  {snapshot.userProfiles.map((profile) => (
+                    <tr key={profile.id}>
+                      <td className="px-4 py-3">{profile.email}</td>
+                      <td className="px-4 py-3">
+                        <Badge className="bg-slate-100 text-slate-700 ring-slate-200">{profile.role}</Badge>
+                      </td>
+                      <td className="px-4 py-3 text-muted-foreground">{formatDate(profile.updatedAt)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="rounded-lg border border-dashed bg-slate-50 p-6 text-sm text-muted-foreground">
+              No approved users are listed yet. Create user accounts in Supabase Auth first, then add their email and role here.
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       <section className="grid gap-4 lg:grid-cols-2">
         <Card className="shadow-panel">
           <CardHeader>
@@ -339,6 +417,10 @@ export default async function AdminStatusPage() {
               DATABASE_URL=
               <br />
               DIRECT_URL=
+              <br />
+              NEXT_PUBLIC_SUPABASE_URL=
+              <br />
+              NEXT_PUBLIC_SUPABASE_ANON_KEY=
               <br />
               ADMIN_PASSWORD=
               <br />
@@ -357,7 +439,7 @@ export default async function AdminStatusPage() {
           <CardContent className="space-y-3 text-sm text-muted-foreground">
             <div className="flex items-start gap-2">
               <ShieldCheck className="mt-0.5 h-4 w-4 text-primary" />
-              <span>Admin password is required for ingestion, backfill, body fetch, and review write actions.</span>
+              <span>Supabase Auth protects the full app, while the temporary admin password can still unlock admin-only operational controls.</span>
             </div>
             <div className="flex items-start gap-2">
               <Database className="mt-0.5 h-4 w-4 text-primary" />

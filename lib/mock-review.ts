@@ -27,6 +27,8 @@ export type MockReviewArticle = {
   linkedShowTitle: string | null;
   extractedProjectTitle: string | null;
   extractedFormat: string | null;
+  extractedGenre?: string | null;
+  extractedSourceMaterial?: string | null;
   extractedStatus: string | null;
   extractedLogline: string | null;
   extractedBuyer: string | null;
@@ -34,11 +36,16 @@ export type MockReviewArticle = {
   extractedCompanies: string | null;
   extractedPeople: string | null;
   extractedCountry: string | null;
+  extractedIsAcquisition?: boolean | null;
+  extractedIsCoProduction?: boolean | null;
+  extractedIsInternational?: boolean | null;
   extractedAnnouncementDate: Date | null;
   extractedPremiereDate: Date | null;
   extractedRelationships: string | null;
   extractedFieldsNeedingReview?: string | null;
   extractedDeduplicationNotes?: string | null;
+  extractedStructuredDataJson?: unknown;
+  aiExtractionError?: string | null;
 };
 
 export const mockReviewArticles: MockReviewArticle[] = [

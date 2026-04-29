@@ -2,11 +2,13 @@ import {
   Building2,
   CalendarDays,
   ClipboardList,
+  CopyMinus,
   FileText,
   LayoutDashboard,
   Radio,
   Settings,
   ShieldCheck,
+  History,
   UsersRound
 } from "lucide-react";
 
@@ -17,9 +19,11 @@ export const navItems = [
   { href: "/buyers", label: "Buyers", icon: Building2 },
   { href: "/companies", label: "Companies & Talent", icon: UsersRound },
   { href: "/review", label: "Article Review Queue", icon: FileText },
+  { href: "/duplicates", label: "Duplicate Review", icon: CopyMinus },
   { href: "/weekly-reports", label: "Weekly Reports", icon: CalendarDays },
   { href: "/sources", label: "Sources / Ingestion", icon: Settings },
-  { href: "/admin/status", label: "Admin Status", icon: ShieldCheck }
+  { href: "/admin/status", label: "Admin Status", icon: ShieldCheck },
+  { href: "/admin/audit-log", label: "Admin Audit Log", icon: History }
 ];
 
 export const statusTone: Record<string, string> = {

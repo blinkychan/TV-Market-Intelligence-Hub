@@ -1,18 +1,20 @@
 import Link from "next/link";
 import { Check, CopyMinus, ExternalLink, FilePenLine, FileSearch, FileText, Link2, PlusCircle, ShieldAlert, X } from "lucide-react";
 import {
+  approveAndCreateRecordsAction,
   createCurrentShowFromArticle,
   createOrLinkBuyer,
   createOrLinkCompanies,
   createOrLinkPeople,
   createProjectFromArticle,
   createRelationships,
-  extractArticleData,
   fetchArticleBodyAction,
   fetchBodiesForNeedsReview,
   fetchSelectedBodiesAction,
   linkArticleToProject,
   linkArticleToShow,
+  runAiExtractionAction,
+  runAiExtractionForSelectedAction,
   saveExtractedFields,
   updateArticleStatus
 } from "./actions";
@@ -21,13 +23,20 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Select } from "@/components/ui/input";
 import { Table, Td, Th } from "@/components/ui/table";
-import { isAdminSessionValid } from "@/lib/admin-auth";
+import { ChangeHistoryPanel } from "@/components/audit/change-history";
+import { SavedViewRouterPanel } from "@/components/shared/saved-view-router-panel";
+import { TeamNotesPanel } from "@/components/shared/team-notes-panel";
+import type { AuditLogEntry } from "@/lib/audit";
 import { mockCurrentShows } from "@/lib/mock-current-tv";
+import { mockAuditLogs } from "@/lib/mock-audit";
 import { readMockPreviewState } from "@/lib/mock-preview-store";
 import { mockReviewArticles } from "@/lib/mock-review";
 import { prisma } from "@/lib/prisma";
 import { canUseMockPreview, mockPreviewDisabledReason } from "@/lib/runtime-mode";
+import { getSavedViewsForPage } from "@/lib/saved-views";
 import { sourceReliabilityTone } from "@/lib/source-reliability";
+import { getCurrentUserContext } from "@/lib/team-auth";
+import { getTeamNotes } from "@/lib/team-notes";
 import { cn, formatDate, humanize } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -62,6 +71,8 @@ type ReviewArticle = {
   linkedShowTitle: string | null;
   extractedProjectTitle: string | null;
   extractedFormat: string | null;
+  extractedGenre?: string | null;
+  extractedSourceMaterial?: string | null;
   extractedStatus: string | null;
   extractedLogline: string | null;
   extractedBuyer: string | null;
@@ -69,11 +80,17 @@ type ReviewArticle = {
   extractedCompanies: string | null;
   extractedPeople: string | null;
   extractedCountry: string | null;
+  extractedIsAcquisition?: boolean | null;
+  extractedIsCoProduction?: boolean | null;
+  extractedIsInternational?: boolean | null;
   extractedAnnouncementDate: Date | null;
   extractedPremiereDate: Date | null;
   extractedRelationships: string | null;
   extractedFieldsNeedingReview?: string | null;
   extractedDeduplicationNotes?: string | null;
+  extractedStructuredDataJson?: unknown;
+  aiExtractionError?: string | null;
+  changeHistory?: AuditLogEntry[];
 };
 
 const statusOptions = ["All", "New", "Needs Review", "Approved", "Rejected", "Duplicate"];
@@ -190,6 +207,8 @@ async function getReviewData() {
         linkedShowTitle: article.linkedShow?.title ?? null,
         extractedProjectTitle: article.extractedProjectTitle,
         extractedFormat: article.extractedFormat,
+        extractedGenre: article.extractedGenre,
+        extractedSourceMaterial: article.extractedSourceMaterial,
         extractedStatus: article.extractedStatus,
         extractedLogline: article.extractedLogline,
         extractedBuyer: article.extractedBuyer,
@@ -197,11 +216,16 @@ async function getReviewData() {
         extractedCompanies: article.extractedCompanies,
         extractedPeople: article.extractedPeople,
         extractedCountry: article.extractedCountry,
+        extractedIsAcquisition: article.extractedIsAcquisition,
+        extractedIsCoProduction: article.extractedIsCoProduction,
+        extractedIsInternational: article.extractedIsInternational,
         extractedAnnouncementDate: article.extractedAnnouncementDate,
         extractedPremiereDate: article.extractedPremiereDate,
         extractedRelationships: article.extractedRelationships,
         extractedFieldsNeedingReview: article.extractedFieldsNeedingReview,
-        extractedDeduplicationNotes: article.extractedDeduplicationNotes
+        extractedDeduplicationNotes: article.extractedDeduplicationNotes,
+        extractedStructuredDataJson: article.extractedStructuredDataJson,
+        aiExtractionError: article.aiExtractionError
       })),
       errorMessage: undefined
     };
@@ -232,7 +256,10 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
   const query = (params.q ?? "").trim().toLowerCase();
   const statusFilter = params.status ?? "All";
   const { articles, dataSource, projects, currentShows, errorMessage } = await getReviewData();
-  const adminUnlocked = await isAdminSessionValid();
+  const auth = await getCurrentUserContext();
+  const savedViews = await getSavedViewsForPage("articles").catch(() => []);
+  const canEdit = auth.canEditContent || auth.adminUnlocked;
+  const canAdminOps = auth.canManageIngestion || auth.adminUnlocked;
 
   const filteredArticles = articles.filter((article) => {
     const matchesStatus = statusFilter === "All" || article.extractionStatus === statusFilter;
@@ -256,6 +283,20 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
     filteredArticles.find((article) => article.id === params.articleId) ??
     filteredArticles[0] ??
     null;
+  const selectedArticleHistory =
+    dataSource === "database" && selectedArticle
+      ? await prisma.auditLog.findMany({
+          where: { entityType: "Article", entityId: selectedArticle.id },
+          orderBy: { createdAt: "desc" },
+          take: 8
+        }).catch(() => [])
+      : selectedArticle
+        ? mockAuditLogs.filter((log) => log.entityType === "Article" && log.entityId === selectedArticle.id)
+        : [];
+  const selectedArticleNotes =
+    dataSource === "database" && selectedArticle
+      ? await getTeamNotes("Article", selectedArticle.id).catch(() => [])
+      : [];
 
   const queueCount = articles.filter((article) => article.extractionStatus === "Needs Review" || article.extractionStatus === "New").length;
   const approvedCount = articles.filter((article) => article.extractionStatus === "Approved").length;
@@ -281,13 +322,9 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
             {dataSource === "mock" ? `Preview data is active because the database queue could not be read: ${errorMessage}` : errorMessage}
           </div>
         ) : null}
-        {!adminUnlocked ? (
+        {!canEdit ? (
           <div className="mt-4 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900">
-            Review edits and ingestion actions are locked until you unlock admin controls on{" "}
-            <Link href="/admin/login?next=%2Freview" className="font-medium underline">
-              the admin login page
-            </Link>
-            .
+            Your current role is read-only. Editors can work the review queue, and admins can also run body-fetch and ingestion-adjacent controls.
           </div>
         ) : null}
       </section>
@@ -307,6 +344,17 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
         </Card>
       </section>
 
+      <SavedViewRouterPanel
+        pageType="articles"
+        savedViews={savedViews}
+        returnPath="/review"
+        currentState={{ filtersJson: { q: params.q ?? "", status: statusFilter } }}
+        canCreateTeamView={auth.canEditContent || auth.adminUnlocked}
+        currentUserEmail={auth.user?.email ?? null}
+        canManageAll={auth.canManageUsers || auth.adminUnlocked}
+        canWrite={dataSource === "database"}
+      />
+
       <Card className="shadow-panel">
         <CardHeader>
           <CardTitle>Queue Filters</CardTitle>
@@ -325,12 +373,15 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
           </form>
           <div className="flex flex-wrap gap-2">
             <form action={fetchBodiesForNeedsReview}>
-              <Button type="submit" variant="secondary" disabled={!adminUnlocked}>
+              <Button type="submit" variant="secondary" disabled={!canAdminOps}>
                 <FileText className="h-4 w-4" /> Fetch Bodies for Needs Review
               </Button>
             </form>
-            <Button type="submit" form="review-bulk-body-fetch" variant="secondary" disabled={!adminUnlocked || !filteredArticles.length}>
+            <Button type="submit" form="review-bulk-body-fetch" variant="secondary" disabled={!canAdminOps || !filteredArticles.length}>
               <FileText className="h-4 w-4" /> Fetch Bodies for Checked Rows
+            </Button>
+            <Button type="submit" form="review-bulk-body-fetch" formAction={runAiExtractionForSelectedAction} disabled={!canEdit || !filteredArticles.length}>
+              <FileSearch className="h-4 w-4" /> Run AI Extraction for Selected
             </Button>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -484,6 +535,9 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
                     {selectedArticle.bodyFetchError ? (
                       <p className="mt-3 text-sm leading-6 text-rose-700">{selectedArticle.bodyFetchError}</p>
                     ) : null}
+                    {selectedArticle.aiExtractionError ? (
+                      <p className="mt-3 text-sm leading-6 text-rose-700">{selectedArticle.aiExtractionError}</p>
+                    ) : null}
                     {selectedArticle.extractedDeduplicationNotes ? (
                       <p className="mt-3 text-sm leading-6 text-amber-800">{selectedArticle.extractedDeduplicationNotes}</p>
                     ) : null}
@@ -499,26 +553,29 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
                         Respect robots rules, fetch politely, and store readable text only for internal review and extraction.
                       </p>
                     </div>
-                    <Button type="submit" variant="secondary" disabled={!adminUnlocked}>
+                    <Button type="submit" variant="secondary" disabled={!canAdminOps}>
                       <FileText className="h-4 w-4" /> Fetch Article Body
                     </Button>
                   </div>
                 </form>
 
-                <form action={extractArticleData} className="rounded-lg border p-4">
+                <form action={runAiExtractionAction} className="rounded-lg border p-4 space-y-4">
                   <input type="hidden" name="articleId" value={selectedArticle.id} />
-                  <input type="hidden" name="mode" value={dataSource === "mock" ? "mock" : "placeholder"} />
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div>
-                      <div className="text-sm font-medium">Structured Extraction</div>
+                      <div className="text-sm font-medium">AI Extraction</div>
                       <p className="text-sm text-muted-foreground">
-                        Extraction prefers article body text first, then excerpt, summary, and only uses headline-only fallback as a last resort.
+                        AI extraction prefers article body text first, then excerpt, summary, and only uses headline-only fallback as a last resort.
                       </p>
                     </div>
-                    <Button type="submit" disabled={!adminUnlocked}>
-                      <FileSearch className="h-4 w-4" /> Extract Structured Data
+                    <Button type="submit" disabled={!canEdit}>
+                      <FileSearch className="h-4 w-4" /> Run AI Extraction
                     </Button>
                   </div>
+                  <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <input type="checkbox" name="confirmOverwrite" />
+                    Replace existing extracted fields
+                  </label>
                 </form>
 
                 <div className="grid gap-3 md:grid-cols-2">
@@ -527,10 +584,15 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
                     <dl className="mt-3 space-y-2 text-sm">
                       <div className="flex justify-between gap-4"><dt className="text-muted-foreground">Title</dt><dd className="text-right">{selectedArticle.extractedProjectTitle ?? "None"}</dd></div>
                       <div className="flex justify-between gap-4"><dt className="text-muted-foreground">Format</dt><dd className="text-right">{selectedArticle.extractedFormat ?? "None"}</dd></div>
+                      <div className="flex justify-between gap-4"><dt className="text-muted-foreground">Genre</dt><dd className="text-right">{selectedArticle.extractedGenre ?? "None"}</dd></div>
+                      <div className="flex justify-between gap-4"><dt className="text-muted-foreground">Source Material</dt><dd className="text-right">{selectedArticle.extractedSourceMaterial ?? "None"}</dd></div>
                       <div className="flex justify-between gap-4"><dt className="text-muted-foreground">Status</dt><dd className="text-right">{humanize(selectedArticle.extractedStatus)}</dd></div>
                       <div className="flex justify-between gap-4"><dt className="text-muted-foreground">Buyer</dt><dd className="text-right">{selectedArticle.extractedBuyer ?? "None"}</dd></div>
                       <div className="flex justify-between gap-4"><dt className="text-muted-foreground">Studio</dt><dd className="text-right">{selectedArticle.extractedStudio ?? "None"}</dd></div>
                       <div className="flex justify-between gap-4"><dt className="text-muted-foreground">Country</dt><dd className="text-right">{selectedArticle.extractedCountry ?? "None"}</dd></div>
+                      <div className="flex justify-between gap-4"><dt className="text-muted-foreground">Acquisition</dt><dd className="text-right">{selectedArticle.extractedIsAcquisition ? "Yes" : "No"}</dd></div>
+                      <div className="flex justify-between gap-4"><dt className="text-muted-foreground">Co-Production</dt><dd className="text-right">{selectedArticle.extractedIsCoProduction ? "Yes" : "No"}</dd></div>
+                      <div className="flex justify-between gap-4"><dt className="text-muted-foreground">International</dt><dd className="text-right">{selectedArticle.extractedIsInternational ? "Yes" : "No"}</dd></div>
                     </dl>
                     <p className="mt-3 text-sm leading-6 text-slate-700">{selectedArticle.extractedLogline ?? "No extracted logline yet."}</p>
                   </div>
@@ -573,6 +635,12 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
                         <div className="text-muted-foreground">Fields Needing Review</div>
                         <p className="mt-1 leading-6 text-slate-700">{selectedArticle.extractedFieldsNeedingReview ?? "No flagged fields."}</p>
                       </div>
+                      <div>
+                        <div className="text-muted-foreground">Stored AI Extraction JSON</div>
+                        <pre className="mt-1 max-h-44 overflow-auto rounded-md bg-slate-50 p-3 text-xs leading-5 text-slate-700">
+                          {selectedArticle.extractedStructuredDataJson ? JSON.stringify(selectedArticle.extractedStructuredDataJson, null, 2) : "No AI extraction snapshot stored yet."}
+                        </pre>
+                      </div>
                       {selectedArticle.extractedFieldsNeedingReview?.toLowerCase().includes("headline-only extraction") ? (
                         <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
                           Low confidence: headline-only extraction.
@@ -591,12 +659,19 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
                     <form key={action.value} action={updateArticleStatus}>
                       <input type="hidden" name="articleId" value={selectedArticle.id} />
                       <input type="hidden" name="extractionStatus" value={action.value} />
-                      <Button type="submit" variant={action.value === "Approve" ? "primary" : "secondary"} className="w-full" disabled={!adminUnlocked}>
+                      <Button type="submit" variant={action.value === "Approve" ? "primary" : "secondary"} className="w-full" disabled={!canEdit}>
                         <action.icon className="h-4 w-4" /> {action.label}
                       </Button>
                     </form>
                   ))}
                 </div>
+
+                <form action={approveAndCreateRecordsAction}>
+                  <input type="hidden" name="articleId" value={selectedArticle.id} />
+                  <Button type="submit" className="w-full" disabled={!canEdit}>
+                    <Check className="h-4 w-4" /> Approve and Create Records
+                  </Button>
+                </form>
 
                 <form action={saveExtractedFields} className="space-y-4 rounded-lg border p-4">
                   <input type="hidden" name="articleId" value={selectedArticle.id} />
@@ -609,6 +684,8 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
                     <Input name="confidenceScore" type="number" step="0.01" min="0" max="1" defaultValue={selectedArticle.confidenceScore ?? ""} placeholder="Confidence score" />
                     <Input name="extractedProjectTitle" defaultValue={selectedArticle.extractedProjectTitle ?? ""} placeholder="Project / show title" />
                     <Input name="extractedFormat" defaultValue={selectedArticle.extractedFormat ?? ""} placeholder="Format" />
+                    <Input name="extractedGenre" defaultValue={selectedArticle.extractedGenre ?? ""} placeholder="Genre" />
+                    <Input name="extractedSourceMaterial" defaultValue={selectedArticle.extractedSourceMaterial ?? ""} placeholder="Source material / IP" />
                     <Input name="extractedStatus" defaultValue={selectedArticle.extractedStatus ?? ""} placeholder="Status" />
                     <Input name="extractedBuyer" defaultValue={selectedArticle.extractedBuyer ?? ""} placeholder="Buyer / network / platform" />
                     <Input name="extractedStudio" defaultValue={selectedArticle.extractedStudio ?? ""} placeholder="Studio" />
@@ -617,6 +694,9 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
                     <Input name="extractedPeople" defaultValue={selectedArticle.extractedPeople ?? ""} placeholder="People (comma-separated)" className="md:col-span-2" />
                     <Input name="extractedAnnouncementDate" type="date" defaultValue={selectedArticle.extractedAnnouncementDate ? new Date(selectedArticle.extractedAnnouncementDate).toISOString().slice(0, 10) : ""} />
                     <Input name="extractedPremiereDate" type="date" defaultValue={selectedArticle.extractedPremiereDate ? new Date(selectedArticle.extractedPremiereDate).toISOString().slice(0, 10) : ""} />
+                    <label className="flex items-center gap-2 text-sm text-muted-foreground"><input type="checkbox" name="extractedIsAcquisition" defaultChecked={Boolean(selectedArticle.extractedIsAcquisition)} /> Acquisition</label>
+                    <label className="flex items-center gap-2 text-sm text-muted-foreground"><input type="checkbox" name="extractedIsCoProduction" defaultChecked={Boolean(selectedArticle.extractedIsCoProduction)} /> Co-Production</label>
+                    <label className="flex items-center gap-2 text-sm text-muted-foreground"><input type="checkbox" name="extractedIsInternational" defaultChecked={Boolean(selectedArticle.extractedIsInternational)} /> International</label>
                   </div>
                   <textarea
                     name="summary"
@@ -653,7 +733,7 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
                     placeholder="Deduplication notes"
                     className="w-full rounded-md border bg-background px-3 py-2 text-sm"
                   />
-                  <Button type="submit" variant="secondary" disabled={!adminUnlocked}>
+                  <Button type="submit" variant="secondary" disabled={!canEdit}>
                     <ShieldAlert className="h-4 w-4" /> Edit Extracted Fields
                   </Button>
                 </form>
@@ -663,13 +743,13 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
                   <div className="grid gap-3 sm:grid-cols-2">
                     <form action={createProjectFromArticle}>
                       <input type="hidden" name="articleId" value={selectedArticle.id} />
-                      <Button type="submit" className="w-full" disabled={!adminUnlocked}>
+                      <Button type="submit" className="w-full" disabled={!canEdit}>
                         <PlusCircle className="h-4 w-4" /> Create Project
                       </Button>
                     </form>
                     <form action={createCurrentShowFromArticle}>
                       <input type="hidden" name="articleId" value={selectedArticle.id} />
-                      <Button type="submit" variant="secondary" className="w-full" disabled={!adminUnlocked}>
+                      <Button type="submit" variant="secondary" className="w-full" disabled={!canEdit}>
                         <FileText className="h-4 w-4" /> Create Current Show
                       </Button>
                     </form>
@@ -684,7 +764,7 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
                         </option>
                       ))}
                     </Select>
-                    <Button type="submit" variant="ghost" disabled={!projects.length || !adminUnlocked}>
+                    <Button type="submit" variant="ghost" disabled={!projects.length || !canEdit}>
                       <Link2 className="h-4 w-4" /> Link to Existing Project
                     </Button>
                   </form>
@@ -698,37 +778,52 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
                         </option>
                       ))}
                     </Select>
-                    <Button type="submit" variant="ghost" disabled={!currentShows.length || !adminUnlocked}>
+                    <Button type="submit" variant="ghost" disabled={!currentShows.length || !canEdit}>
                       <Link2 className="h-4 w-4" /> Link to Existing Show
                     </Button>
                   </form>
                   <div className="grid gap-3 sm:grid-cols-2">
                     <form action={createOrLinkBuyer}>
                       <input type="hidden" name="articleId" value={selectedArticle.id} />
-                      <Button type="submit" variant="secondary" className="w-full" disabled={!adminUnlocked}>
+                      <Button type="submit" variant="secondary" className="w-full" disabled={!canEdit}>
                         <PlusCircle className="h-4 w-4" /> Create/Link Buyer
                       </Button>
                     </form>
                     <form action={createOrLinkCompanies}>
                       <input type="hidden" name="articleId" value={selectedArticle.id} />
-                      <Button type="submit" variant="secondary" className="w-full" disabled={!adminUnlocked}>
+                      <Button type="submit" variant="secondary" className="w-full" disabled={!canEdit}>
                         <PlusCircle className="h-4 w-4" /> Create/Link Companies
                       </Button>
                     </form>
                     <form action={createOrLinkPeople}>
                       <input type="hidden" name="articleId" value={selectedArticle.id} />
-                      <Button type="submit" variant="secondary" className="w-full" disabled={!adminUnlocked}>
+                      <Button type="submit" variant="secondary" className="w-full" disabled={!canEdit}>
                         <PlusCircle className="h-4 w-4" /> Create/Link People
                       </Button>
                     </form>
                     <form action={createRelationships}>
                       <input type="hidden" name="articleId" value={selectedArticle.id} />
-                      <Button type="submit" variant="secondary" className="w-full" disabled={!adminUnlocked}>
+                      <Button type="submit" variant="secondary" className="w-full" disabled={!canEdit}>
                         <Link2 className="h-4 w-4" /> Create Relationships
                       </Button>
                     </form>
                   </div>
                 </div>
+
+                <ChangeHistoryPanel
+                  title="Article Change History"
+                  logs={selectedArticleHistory}
+                  emptyText="No article-level change history has been recorded yet."
+                />
+                <TeamNotesPanel
+                  entityType="Article"
+                  entityId={selectedArticle.id}
+                  notes={selectedArticleNotes}
+                  returnPath={`/review?articleId=${selectedArticle.id}${statusFilter !== "All" ? `&status=${encodeURIComponent(statusFilter)}` : ""}${params.q ? `&q=${encodeURIComponent(params.q)}` : ""}`}
+                  currentUserEmail={auth.user?.email ?? null}
+                  canManageAll={auth.canManageUsers || auth.adminUnlocked}
+                  canWrite={dataSource === "database"}
+                />
               </div>
             ) : (
               <div className="rounded-lg border border-dashed bg-slate-50 p-8 text-center text-sm text-muted-foreground">

@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { ArrowLeft, ExternalLink } from "lucide-react";
 import { BreakdownBars } from "@/components/charts/breakdown-bars";
+import { TeamNotesPanel } from "@/components/shared/team-notes-panel";
+import { ChangeHistoryPanel } from "@/components/audit/change-history";
 import { Badge, StatusBadge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select } from "@/components/ui/input";
@@ -29,11 +31,17 @@ function booleanFilter(value: boolean, filter: string) {
 export function BuyerDetail({
   buyer,
   dataSource,
-  errorMessage
+  errorMessage,
+  currentUserEmail,
+  canManageAllNotes,
+  canWriteNotes
 }: {
   buyer: BuyerDetailData;
   dataSource: "database" | "mock";
   errorMessage?: string;
+  currentUserEmail: string | null;
+  canManageAllNotes: boolean;
+  canWriteNotes: boolean;
 }) {
   const [year, setYear] = useState("all");
   const [status, setStatus] = useState("all");
@@ -141,6 +149,17 @@ export function BuyerDetail({
           <Card className="shadow-panel"><CardHeader><CardTitle>People / Talent</CardTitle></CardHeader><CardContent className="text-sm">{people.join(", ") || "None logged"}</CardContent></Card>
         </div>
       </section>
+
+      <ChangeHistoryPanel title="Buyer Change History" logs={buyer.changeHistory ?? []} emptyText="No buyer-level change history has been logged yet." />
+      <TeamNotesPanel
+        entityType="Buyer"
+        entityId={buyer.id}
+        notes={buyer.teamNotes ?? []}
+        returnPath={`/buyers/${buyer.id}`}
+        currentUserEmail={currentUserEmail}
+        canManageAll={canManageAllNotes}
+        canWrite={canWriteNotes}
+      />
     </div>
   );
 }

@@ -13,9 +13,11 @@ import {
   useReactTable
 } from "@tanstack/react-table";
 import { ArrowDown, ArrowUp, ChevronsUpDown, ChevronDown, ChevronRight, ExternalLink, Search } from "lucide-react";
+import { SavedViewsPanel } from "@/components/shared/saved-views-panel";
 import { Badge, StatusBadge } from "@/components/ui/badge";
 import { Input, Select } from "@/components/ui/input";
 import { Table, Td, Th } from "@/components/ui/table";
+import type { SavedViewRecord } from "@/lib/saved-views";
 import { formatDate, humanize } from "@/lib/utils";
 
 export type DevelopmentRow = {
@@ -75,7 +77,21 @@ function booleanFilterMatches(value: boolean, filter: string) {
   return true;
 }
 
-export function DevelopmentTable({ rows }: { rows: DevelopmentRow[] }) {
+export function DevelopmentTable({
+  rows,
+  savedViewsData = [],
+  currentUserEmail = null,
+  canCreateTeamView = false,
+  canManageAllSavedViews = false,
+  canWriteSavedViews = true
+}: {
+  rows: DevelopmentRow[];
+  savedViewsData?: SavedViewRecord[];
+  currentUserEmail?: string | null;
+  canCreateTeamView?: boolean;
+  canManageAllSavedViews?: boolean;
+  canWriteSavedViews?: boolean;
+}) {
   const [globalFilter, setGlobalFilter] = useState("");
   const [sorting, setSorting] = useState<SortingState>([{ id: "announcementDate", desc: true }]);
   const [savedView, setSavedView] = useState("current");
@@ -89,6 +105,22 @@ export function DevelopmentTable({ rows }: { rows: DevelopmentRow[] }) {
   const [coProduction, setCoProduction] = useState("all");
   const [international, setInternational] = useState("all");
   const [needsReview, setNeedsReview] = useState("all");
+
+  function applySavedView(view: SavedViewRecord) {
+    const filters = (view.filtersJson ?? {}) as Record<string, unknown>;
+    setSavedView(String(filters.savedView ?? "current"));
+    setGlobalFilter(String(filters.globalFilter ?? ""));
+    setStatus(String(filters.status ?? "all"));
+    setBuyer(String(filters.buyer ?? "all"));
+    setStudio(String(filters.studio ?? "all"));
+    setGenre(String(filters.genre ?? "all"));
+    setYear(String(filters.year ?? "all"));
+    setCountry(String(filters.country ?? "all"));
+    setAcquisition(String(filters.acquisition ?? "all"));
+    setCoProduction(String(filters.coProduction ?? "all"));
+    setInternational(String(filters.international ?? "all"));
+    setNeedsReview(String(filters.needsReview ?? "all"));
+  }
 
   const filteredRows = useMemo(
     () =>
@@ -228,6 +260,33 @@ export function DevelopmentTable({ rows }: { rows: DevelopmentRow[] }) {
 
   return (
     <div className="space-y-4">
+      <SavedViewsPanel
+        pageType="development_tracker"
+        savedViews={savedViewsData}
+        returnPath="/development"
+        currentState={{
+          filtersJson: {
+            savedView,
+            globalFilter,
+            status,
+            buyer,
+            studio,
+            genre,
+            year,
+            country,
+            acquisition,
+            coProduction,
+            international,
+            needsReview
+          },
+          sortJson: sorting
+        }}
+        canCreateTeamView={canCreateTeamView}
+        currentUserEmail={currentUserEmail}
+        canManageAll={canManageAllSavedViews}
+        canWrite={canWriteSavedViews}
+        onLoadView={applySavedView}
+      />
       <div className="rounded-lg border bg-white p-4 shadow-panel">
         <div className="flex flex-wrap gap-2">
           {savedViews.map((view) => (

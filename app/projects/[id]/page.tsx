@@ -1,9 +1,14 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, ExternalLink } from "lucide-react";
+import { ChangeHistoryPanel } from "@/components/audit/change-history";
+import { TeamNotesPanel } from "@/components/shared/team-notes-panel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { StatusBadge } from "@/components/ui/badge";
+import { getAuditHistory } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
+import { getCurrentUserContext } from "@/lib/team-auth";
+import { getTeamNotes } from "@/lib/team-notes";
 import { formatDate, humanize } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -22,6 +27,9 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
   });
 
   if (!project) notFound();
+  const history = await getAuditHistory("Project", project.id).catch(() => []);
+  const notes = await getTeamNotes("Project", project.id).catch(() => []);
+  const auth = await getCurrentUserContext();
 
   return (
     <div className="space-y-6">
@@ -105,6 +113,17 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
           </CardContent>
         </Card>
       </section>
+
+      <ChangeHistoryPanel logs={history} emptyText="No project-level changes have been recorded yet." />
+      <TeamNotesPanel
+        entityType="Project"
+        entityId={project.id}
+        notes={notes}
+        returnPath={`/projects/${project.id}`}
+        currentUserEmail={auth.user?.email ?? null}
+        canManageAll={auth.canManageUsers || auth.adminUnlocked}
+        canWrite
+      />
     </div>
   );
 }

@@ -1,4 +1,5 @@
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
+import { defaultCurrentTvSources } from "../lib/current-tv-sources";
 import { inferSourceReliability } from "../lib/source-reliability";
 
 const prisma = new PrismaClient();
@@ -8,8 +9,12 @@ const date = (value: string) => new Date(`${value}T12:00:00.000Z`);
 async function main() {
   await prisma.relationship.deleteMany();
   await prisma.backfillJob.deleteMany();
+  await prisma.auditLog.deleteMany();
+  await prisma.teamNote.deleteMany();
+  await prisma.savedView.deleteMany();
   await prisma.ingestionRun.deleteMany();
   await prisma.rssFeed.deleteMany();
+  await prisma.currentTvSource.deleteMany();
   await prisma.weeklyReport.deleteMany();
   await prisma.article.deleteMany();
   await prisma.currentShow.deleteMany();
@@ -17,6 +22,7 @@ async function main() {
   await prisma.person.deleteMany();
   await prisma.company.deleteMany();
   await prisma.buyer.deleteMany();
+  await prisma.userProfile.deleteMany();
 
   const buyers = await Promise.all(
     ([
@@ -26,6 +32,7 @@ async function main() {
       { name: "FX", type: "cable", parentCompany: "Disney", notes: "Auteur-driven scripted and limited series." },
       { name: "Peacock", type: "streamer", parentCompany: "NBCUniversal", notes: "Broad commercial streaming buyer." },
       { name: "Apple TV+", type: "streamer", parentCompany: "Apple", notes: "Premium global scripted and documentary buyer." },
+      { name: "Apple TV Plus", type: "streamer", parentCompany: "Apple", notes: "Alias-heavy duplicate candidate for Apple TV+.", aliases: "AppleTV+" as string, duplicateGroupId: "buyer-apple-tv", duplicateConfidence: 0.82, possibleDuplicateOfId: null, duplicateStatus: "possible_duplicate" as const },
       { name: "BBC", type: "broadcast", parentCompany: "BBC", notes: "UK broadcaster and co-production partner." },
       { name: "Fremantle", type: "distributor", parentCompany: "RTL Group", notes: "International distributor and format partner." }
     ] as const).map((item) => prisma.buyer.create({ data: item }))
@@ -39,6 +46,7 @@ async function main() {
       { name: "A24 Television", type: "studio", notes: "Premium studio for talent-driven packages." },
       { name: "20th Television", type: "studio", notes: "Disney-owned television studio." },
       { name: "Warner Bros. Television", type: "studio", notes: "Large scripted television supplier." },
+      { name: "WBTV", type: "studio", notes: "Common short-form alias for Warner Bros. Television.", aliases: "Warner Bros. Television" as string, duplicateGroupId: "company-wbtv", duplicateConfidence: 0.87, possibleDuplicateOfId: null, duplicateStatus: "possible_duplicate" as const },
       { name: "wiip", type: "production_company", notes: "Independent studio and production company." },
       { name: "Bad Wolf", type: "production_company", notes: "UK scripted producer with co-production experience." },
       { name: "Left/Right", type: "production_company", notes: "Unscripted and documentary producer." },
@@ -61,7 +69,8 @@ async function main() {
       { name: "Priya Raman", role: "producer", company: "Tomorrow Studios", reps: "Grandview", notes: "International format producer." },
       { name: "Caleb Stone", role: "actor", company: "Independent", reps: "CAA", notes: "Lead talent attachment." },
       { name: "Rina Sato", role: "creator", company: "Independent", reps: "WME", notes: "Animation and genre creator." },
-      { name: "Marcus Bell", role: "showrunner", company: "Independent", reps: "UTA", notes: "Broadcast procedural showrunner." }
+      { name: "Marcus Bell", role: "showrunner", company: "Independent", reps: "UTA", notes: "Broadcast procedural showrunner." },
+      { name: "Maya R. Rivers", role: "creator", company: "Rivers Room", reps: "UTA / Grandview", notes: "Possible duplicate short-form credit for Maya Rivers.", aliases: "Maya Rivers" as string, duplicateGroupId: "person-maya-rivers", duplicateConfidence: 0.84, possibleDuplicateOfId: null, duplicateStatus: "possible_duplicate" as const }
     ] as const).map((item) => prisma.person.create({ data: item }))
   );
 
@@ -79,7 +88,26 @@ async function main() {
       genre: "Crime Drama",
       country: "United States",
       announced: "2026-04-21",
+      aliases: "Harbour Lights",
       logline: "A coastal medical examiner uncovers a shipping conspiracy while rebuilding ties with her hometown."
+    },
+    {
+      title: "Harbour Lights",
+      type: "scripted",
+      status: "sold",
+      buyer: "Netflix",
+      studio: "A24 Television",
+      prodcos: ["wiip"],
+      people: ["Maya R. Rivers"],
+      genre: "Crime Drama",
+      country: "United States",
+      announced: "2026-04-22",
+      aliases: "Harbor Lights",
+      needsReview: true,
+      duplicateGroupId: "project-harbor-lights",
+      duplicateConfidence: 0.9,
+      duplicateStatus: "possible_duplicate",
+      logline: "Alternate-market spelling of a coastal crime package sale item."
     },
     {
       title: "Northern Exchange",
@@ -164,6 +192,7 @@ async function main() {
       country: "Japan",
       announced: "2026-02-26",
       isInternational: true,
+      aliases: "The Paper Kingdom",
       logline: "A young cartographer enters a folded paper world where maps change the laws of nature."
     },
     {
@@ -285,6 +314,7 @@ async function main() {
       await prisma.project.create({
         data: {
           title: spec.title,
+          aliases: "aliases" in spec ? spec.aliases : null,
           type: spec.type,
           status: spec.status,
           logline: spec.logline,
@@ -305,6 +335,10 @@ async function main() {
           sourceUrl: `https://example.com/projects/${spec.title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`,
           sourcePublication: "Sample Trade",
           confidenceScore: "needsReview" in spec && spec.needsReview ? 0.62 : 0.86,
+          duplicateGroupId: "duplicateGroupId" in spec ? spec.duplicateGroupId : null,
+          duplicateConfidence: "duplicateConfidence" in spec ? spec.duplicateConfidence : null,
+          possibleDuplicateOfId: null,
+          duplicateStatus: "duplicateStatus" in spec ? spec.duplicateStatus : "not_duplicate",
           needsReview: "needsReview" in spec ? Boolean(spec.needsReview) : false,
           notes: "Seed data for local development."
         }
@@ -314,17 +348,32 @@ async function main() {
 
   await prisma.currentShow.createMany({
     data: [
-      { title: "City Desk", networkOrPlatform: "ABC", premiereDate: date("2026-04-29"), finaleDate: date("2026-06-24"), seasonNumber: 2, episodeCount: 10, status: "airing", genre: "Workplace Drama", studio: "20th Television", productionCompanies: "wiip", country: "United States", sourceUrl: "https://example.com/shows/city-desk" },
-      { title: "Midnight Cartographers", networkOrPlatform: "Netflix", premiereDate: date("2026-05-01"), finaleDate: date("2026-05-01"), seasonNumber: 1, episodeCount: 8, status: "premiering soon", genre: "Fantasy", studio: "A24 Television", productionCompanies: "Tomorrow Studios", country: "United States", sourceUrl: "https://example.com/shows/midnight-cartographers" },
-      { title: "Crown Evidence", networkOrPlatform: "BBC", premiereDate: date("2026-05-05"), finaleDate: date("2026-06-09"), seasonNumber: 1, episodeCount: 6, status: "premiering soon", genre: "Crime", studio: "Universal Television", productionCompanies: "Bad Wolf", country: "United Kingdom", sourceUrl: "https://example.com/shows/crown-evidence" },
-      { title: "South Pier", networkOrPlatform: "HBO", premiereDate: date("2026-03-17"), finaleDate: date("2026-05-12"), seasonNumber: 3, episodeCount: 8, status: "airing", genre: "Drama", studio: "Warner Bros. Television", productionCompanies: "A24 Television", country: "United States", sourceUrl: "https://example.com/shows/south-pier" },
-      { title: "The Orchard Trial", networkOrPlatform: "Apple TV+", premiereDate: date("2026-04-12"), finaleDate: date("2026-06-07"), seasonNumber: 1, episodeCount: 8, status: "airing", genre: "Legal Thriller", studio: "A24 Television", productionCompanies: "wiip", country: "United States", sourceUrl: "https://example.com/shows/orchard-trial" },
-      { title: "Food Court Kings", networkOrPlatform: "Peacock", premiereDate: date("2026-05-15"), finaleDate: date("2026-07-10"), seasonNumber: 2, episodeCount: 10, status: "returning", genre: "Food Competition", studio: "Universal Television", productionCompanies: "Left/Right", country: "United States", sourceUrl: "https://example.com/shows/food-court-kings" },
-      { title: "Signal House", networkOrPlatform: "FX", premiereDate: date("2026-02-20"), finaleDate: date("2026-04-30"), seasonNumber: 1, episodeCount: 10, status: "finale soon", genre: "Spy Drama", studio: "20th Television", productionCompanies: "Tomorrow Studios", country: "United States", sourceUrl: "https://example.com/shows/signal-house" },
-      { title: "Blue Meridian", networkOrPlatform: "Netflix", premiereDate: date("2026-03-28"), finaleDate: date("2026-03-28"), seasonNumber: 1, episodeCount: 6, status: "airing", genre: "Mystery", studio: "Universal Television", productionCompanies: "Bad Wolf", country: "Australia", sourceUrl: "https://example.com/shows/blue-meridian" },
-      { title: "Family Systems", networkOrPlatform: "ABC", premiereDate: date("2026-01-09"), finaleDate: date("2026-05-20"), seasonNumber: 4, episodeCount: 18, status: "airing", genre: "Family Drama", studio: "20th Television", productionCompanies: "Left/Right", country: "United States", sourceUrl: "https://example.com/shows/family-systems" },
-      { title: "Animated Republic", networkOrPlatform: "Apple TV+", premiereDate: date("2026-06-03"), finaleDate: date("2026-07-22"), seasonNumber: 1, episodeCount: 8, status: "premiering soon", genre: "Animation", studio: "A24 Television", productionCompanies: "Tomorrow Studios", country: "Japan", sourceUrl: "https://example.com/shows/animated-republic" }
+      { title: "City Desk", networkOrPlatform: "ABC", premiereDate: date("2026-04-29"), finaleDate: date("2026-06-24"), seasonNumber: 2, episodeCount: 10, status: "airing", genre: "Workplace Drama", studio: "20th Television", productionCompanies: "wiip", country: "United States", sourceType: "network_press", sourceReliability: "high", seasonType: "returning_series", premiereTime: "10:00 PM ET", episodeTitle: "The Tip Sheet", episodeNumber: 201, airPattern: "Wednesdays", verifiedAt: date("2026-04-25"), needsVerification: false, sourceUrl: "https://example.com/shows/city-desk" },
+      { title: "Midnight Cartographers", networkOrPlatform: "Netflix", premiereDate: date("2026-05-01"), finaleDate: date("2026-05-01"), seasonNumber: 1, episodeCount: 8, status: "premiering soon", genre: "Fantasy", studio: "A24 Television", productionCompanies: "Tomorrow Studios", country: "United States", sourceType: "platform_press", sourceReliability: "high", seasonType: "new_series", premiereTime: "12:00 AM PT", episodeTitle: "Season Launch", episodeNumber: 101, airPattern: "Full season drop", verifiedAt: date("2026-04-26"), needsVerification: false, sourceUrl: "https://example.com/shows/midnight-cartographers" },
+      { title: "Crown Evidence", networkOrPlatform: "BBC", premiereDate: date("2026-05-05"), finaleDate: date("2026-06-09"), seasonNumber: 1, episodeCount: 6, status: "premiering soon", genre: "Crime", studio: "Universal Television", productionCompanies: "Bad Wolf", country: "United Kingdom", sourceType: "network_press", sourceReliability: "high", seasonType: "new_series", premiereTime: "9:00 PM BST", episodeTitle: "First Evidence", episodeNumber: 101, airPattern: "Tuesdays", verifiedAt: date("2026-04-24"), needsVerification: false, sourceUrl: "https://example.com/shows/crown-evidence" },
+      { title: "South Pier", aliases: "South Pier Season 3", networkOrPlatform: "HBO", premiereDate: date("2026-03-17"), finaleDate: date("2026-05-12"), seasonNumber: 3, episodeCount: 8, status: "airing", genre: "Drama", studio: "Warner Bros. Television", productionCompanies: "A24 Television", country: "United States", sourceType: "trade_roundup", sourceReliability: "medium", seasonType: "returning_series", premiereTime: "9:00 PM ET", episodeTitle: "The Tide Turns", episodeNumber: 307, airPattern: "Sundays", verifiedAt: date("2026-04-18"), needsVerification: false, sourceUrl: "https://example.com/shows/south-pier" },
+      { title: "South Pier Season 3", aliases: "South Pier", networkOrPlatform: "HBO", premiereDate: date("2026-03-17"), finaleDate: date("2026-05-12"), seasonNumber: 3, episodeCount: 8, status: "airing", genre: "Drama", studio: "WBTV", productionCompanies: "A24 Television", country: "United States", sourceType: "trade_roundup", sourceReliability: "medium", seasonType: "returning_series", premiereTime: "9:00 PM ET", episodeTitle: "The Tide Turns", episodeNumber: 307, airPattern: "Sundays", verifiedAt: null, needsVerification: true, sourceUrl: "https://example.com/shows/south-pier-season-3", duplicateGroupId: "show-south-pier", duplicateConfidence: 0.88, possibleDuplicateOfId: null, duplicateStatus: "possible_duplicate" },
+      { title: "The Orchard Trial", networkOrPlatform: "Apple TV+", premiereDate: date("2026-04-12"), finaleDate: date("2026-06-07"), seasonNumber: 1, episodeCount: 8, status: "airing", genre: "Legal Thriller", studio: "A24 Television", productionCompanies: "wiip", country: "United States", sourceType: "platform_press", sourceReliability: "high", seasonType: "limited_series", premiereTime: "12:00 AM PT", episodeTitle: "Voir Dire", episodeNumber: 104, airPattern: "Sundays", verifiedAt: date("2026-04-12"), needsVerification: false, sourceUrl: "https://example.com/shows/orchard-trial" },
+      { title: "Food Court Kings", networkOrPlatform: "Peacock", premiereDate: date("2026-05-15"), finaleDate: date("2026-07-10"), seasonNumber: 2, episodeCount: 10, status: "returning", genre: "Food Competition", studio: "Universal Television", productionCompanies: "Left/Right", country: "United States", sourceType: "platform_press", sourceReliability: "high", seasonType: "returning_series", premiereTime: "8:00 PM ET", episodeTitle: "Kitchen Reopens", episodeNumber: 201, airPattern: "Fridays", verifiedAt: date("2026-04-21"), needsVerification: false, sourceUrl: "https://example.com/shows/food-court-kings" },
+      { title: "Signal House", networkOrPlatform: "FX", premiereDate: date("2026-02-20"), finaleDate: date("2026-04-30"), seasonNumber: 1, episodeCount: 10, status: "finale soon", genre: "Spy Drama", studio: "20th Television", productionCompanies: "Tomorrow Studios", country: "United States", sourceType: "network_press", sourceReliability: "high", seasonType: "finale", premiereTime: "10:00 PM ET", episodeTitle: "Dead Drop", episodeNumber: 110, airPattern: "Thursdays", verifiedAt: date("2026-04-27"), needsVerification: true, sourceUrl: "https://example.com/shows/signal-house" },
+      { title: "Blue Meridian", networkOrPlatform: "Netflix", premiereDate: date("2026-03-28"), finaleDate: date("2026-03-28"), seasonNumber: 1, episodeCount: 6, status: "airing", genre: "Mystery", studio: "Universal Television", productionCompanies: "Bad Wolf", country: "Australia", sourceType: "trade_roundup", sourceReliability: "medium", seasonType: "limited_series", premiereTime: "12:00 AM PT", episodeTitle: "Season Launch", episodeNumber: 101, airPattern: "Full season drop", verifiedAt: date("2026-03-27"), needsVerification: false, sourceUrl: "https://example.com/shows/blue-meridian" },
+      { title: "Family Systems", networkOrPlatform: "ABC", premiereDate: date("2026-01-09"), finaleDate: date("2026-05-20"), seasonNumber: 4, episodeCount: 18, status: "airing", genre: "Family Drama", studio: "20th Television", productionCompanies: "Left/Right", country: "United States", sourceType: "network_press", sourceReliability: "high", seasonType: "returning_series", premiereTime: "8:00 PM ET", episodeTitle: "Parents' Night", episodeNumber: 416, airPattern: "Fridays", verifiedAt: date("2026-04-20"), needsVerification: false, sourceUrl: "https://example.com/shows/family-systems" },
+      { title: "Animated Republic", networkOrPlatform: "Apple TV+", premiereDate: date("2026-06-03"), finaleDate: date("2026-07-22"), seasonNumber: 1, episodeCount: 8, status: "premiering soon", genre: "Animation", studio: "A24 Television", productionCompanies: "Tomorrow Studios", country: "Japan", sourceType: "platform_press", sourceReliability: "high", seasonType: "new_series", premiereTime: "12:00 AM PT", episodeTitle: "Pilot", episodeNumber: 101, airPattern: "Wednesdays", verifiedAt: null, needsVerification: true, sourceUrl: "https://example.com/shows/animated-republic" }
     ]
+  });
+
+  await prisma.currentTvSource.createMany({
+    data: defaultCurrentTvSources.map((source) => ({
+      id: source.id,
+      name: source.name,
+      sourceType: source.sourceType,
+      url: source.url,
+      category: source.category,
+      enabled: source.enabled,
+      sourceReliability: source.sourceReliability,
+      lastChecked: source.lastChecked ? date(source.lastChecked) : null,
+      notes: source.notes
+    }))
   });
 
   await prisma.article.createMany({
@@ -335,6 +384,7 @@ async function main() {
         headline: "Netflix buys Harbor Lights from A24 Television and wiip",
         publishedDate: date("2026-04-21"),
         summary: "A serialized crime drama package lands at Netflix with A24 Television and wiip producing.",
+        aliases: "Harbour Lights",
         rawHtml: "<article><p>Netflix landed Harbor Lights from A24 Television and wiip with Maya Rivers and Noor Hassan attached.</p></article>",
         extractedText:
           "Netflix landed Harbor Lights from A24 Television and wiip with Maya Rivers and Noor Hassan attached. The package follows a medical examiner who uncovers a port corruption conspiracy.",
@@ -352,6 +402,10 @@ async function main() {
         sourceType: "trade",
         suspectedCategory: "Sale",
         confidenceScore: 0.88,
+        duplicateGroupId: "article-harbor-lights",
+        duplicateConfidence: 0.91,
+        possibleDuplicateOfId: null,
+        duplicateStatus: "not_duplicate",
         extractedProjectTitle: "Harbor Lights",
         extractedFormat: "One-hour drama",
         extractedStatus: "sold",
@@ -463,6 +517,7 @@ async function main() {
         headline: "Harbor Lights sale makes Netflix move official",
         publishedDate: date("2026-04-22"),
         summary: "Follow-up item repeating the Harbor Lights sale with little incremental reporting.",
+        aliases: "Harbour Lights sale",
         bodyFetchStatus: "fetch_error",
         bodyFetchError: "Fetch failed with 502.",
         bodyFetchedAt: date("2026-04-22"),
@@ -475,6 +530,10 @@ async function main() {
         sourceType: "trade",
         suspectedCategory: "Sale",
         confidenceScore: 0.52,
+        duplicateGroupId: "article-harbor-lights",
+        duplicateConfidence: 0.91,
+        possibleDuplicateOfId: null,
+        duplicateStatus: "confirmed_duplicate",
         extractedProjectTitle: "Harbor Lights",
         extractedFormat: "One-hour drama",
         extractedStatus: "sold",
@@ -508,6 +567,62 @@ async function main() {
     where: { url: "https://example.com/articles/harbor-lights-duplicate" },
     data: { linkedProjectId: projects.find((item) => item.title === "Harbor Lights")?.id }
   });
+
+  await prisma.buyer.update({
+    where: { id: buyerByName["Apple TV Plus"].id },
+    data: {
+      possibleDuplicateOfId: buyerByName["Apple TV+"].id
+    }
+  });
+
+  await prisma.company.update({
+    where: { id: companyByName.WBTV.id },
+    data: {
+      possibleDuplicateOfId: companyByName["Warner Bros. Television"].id
+    }
+  });
+
+  await prisma.person.update({
+    where: { id: personByName["Maya R. Rivers"].id },
+    data: {
+      possibleDuplicateOfId: personByName["Maya Rivers"].id
+    }
+  });
+
+  const harborLights = projects.find((item) => item.title === "Harbor Lights");
+  const harbourLights = projects.find((item) => item.title === "Harbour Lights");
+  if (harborLights && harbourLights) {
+    await prisma.project.update({
+      where: { id: harbourLights.id },
+      data: {
+        possibleDuplicateOfId: harborLights.id
+      }
+    });
+  }
+
+  const southPier = await prisma.currentShow.findFirst({ where: { title: "South Pier" }, select: { id: true } });
+  const southPierSeason = await prisma.currentShow.findFirst({ where: { title: "South Pier Season 3" }, select: { id: true } });
+  if (southPier && southPierSeason) {
+    await prisma.currentShow.update({
+      where: { id: southPierSeason.id },
+      data: {
+        possibleDuplicateOfId: southPier.id
+      }
+    });
+  }
+
+  const originalHarborArticle = await prisma.article.findUnique({
+    where: { url: "https://example.com/articles/harbor-lights" },
+    select: { id: true }
+  });
+  if (originalHarborArticle) {
+    await prisma.article.update({
+      where: { url: "https://example.com/articles/harbor-lights-duplicate" },
+      data: {
+        possibleDuplicateOfId: originalHarborArticle.id
+      }
+    });
+  }
 
   await prisma.rssFeed.createMany({
     data: [
@@ -647,6 +762,87 @@ async function main() {
       title: "Sample Weekly Report - April 24, 2026",
       generatedMarkdown: "# Sample Weekly Report\n\nSeed report placeholder for dashboard counts."
     }
+  });
+
+  await prisma.auditLog.createMany({
+    data: [
+      {
+        entityType: "Article",
+        entityId: (await prisma.article.findUnique({ where: { url: "https://example.com/articles/harbor-lights" }, select: { id: true } }))?.id ?? "seed-article",
+        action: "extracted",
+        changedByEmail: "seed@local",
+        previousValueJson: { extractionStatus: "New" },
+        newValueJson: { extractionStatus: "Needs Review", extractedProjectTitle: "Harbor Lights" },
+        reason: "Seed review extraction example.",
+        source: "seed"
+      },
+      {
+        entityType: "Project",
+        entityId: harborLights?.id ?? "seed-project",
+        action: "created",
+        changedByEmail: "seed@local",
+        previousValueJson: Prisma.JsonNull,
+        newValueJson: { title: "Harbor Lights", status: "sold" },
+        reason: "Seed starter project.",
+        source: "seed"
+      },
+      {
+        entityType: "CurrentShow",
+        entityId: southPier?.id ?? "seed-show",
+        action: "verified",
+        changedByEmail: "seed@local",
+        previousValueJson: { verifiedAt: null, needsVerification: true },
+        newValueJson: { verifiedAt: date("2026-04-25"), needsVerification: false },
+        reason: "Seed verification example.",
+        source: "seed"
+      }
+    ]
+  });
+
+  await prisma.savedView.createMany({
+    data: [
+      {
+        name: "Current Development",
+        description: "High-priority active development slate.",
+        pageType: "development_tracker",
+        filtersJson: { savedView: "current", status: "all" },
+        sortJson: [{ id: "announcementDate", desc: true }],
+        columnsJson: Prisma.JsonNull,
+        visibility: "team",
+        createdByEmail: "seed@local"
+      },
+      {
+        name: "Needs Review Queue",
+        description: "Articles that still need editorial review.",
+        pageType: "articles",
+        filtersJson: { status: "Needs Review" },
+        sortJson: Prisma.JsonNull,
+        columnsJson: Prisma.JsonNull,
+        visibility: "team",
+        createdByEmail: "seed@local"
+      }
+    ]
+  });
+
+  await prisma.teamNote.createMany({
+    data: [
+      {
+        entityType: "Project",
+        entityId: harborLights?.id ?? "seed-project",
+        note: "Worth flagging for Friday report if Netflix staffing firms up.",
+        tags: "weekly-report, buyer-signal",
+        includeInNextWeeklyReport: true,
+        createdByEmail: "seed@local"
+      },
+      {
+        entityType: "CurrentShow",
+        entityId: southPier?.id ?? "seed-show",
+        note: "Double-check the finale press date against HBO’s latest calendar.",
+        tags: "verification, finale",
+        includeInNextWeeklyReport: false,
+        createdByEmail: "seed@local"
+      }
+    ]
   });
 }
 

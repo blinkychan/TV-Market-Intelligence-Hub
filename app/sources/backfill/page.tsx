@@ -6,10 +6,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Select } from "@/components/ui/input";
 import { Table, Td, Th } from "@/components/ui/table";
-import { isAdminSessionValid } from "@/lib/admin-auth";
 import { BACKFILL_KEYWORD_SETS, mockBackfillJobs } from "@/lib/mock-backfill";
 import { mockFeeds } from "@/lib/mock-sources";
 import { formatJobMonth, getBackfillDashboardData } from "@/lib/backfill";
+import { getCurrentUserContext } from "@/lib/team-auth";
 import { formatDate, humanize } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -23,9 +23,10 @@ function statusTone(status: string) {
 }
 
 export default async function BackfillQueuePage() {
-  const adminUnlocked = await isAdminSessionValid();
+  const auth = await getCurrentUserContext();
   const { jobs, logs, dataSource, statusPanel, errorMessage } = await getBackfillDashboardData();
   const backfillWritable = dataSource === "database" ? !errorMessage : true;
+  const canManageIngestion = auth.canManageIngestion || auth.adminUnlocked;
   const sources = Array.from(new Set([...mockFeeds.map((feed) => feed.publicationName), ...mockBackfillJobs.map((job) => job.source), ...jobs.map((job) => job.source)])).sort();
 
   return (
@@ -56,13 +57,9 @@ export default async function BackfillQueuePage() {
             {dataSource === "mock" ? `Preview data is active because the backfill queue could not be read: ${errorMessage}` : errorMessage}
           </div>
         ) : null}
-        {!adminUnlocked ? (
+        {!canManageIngestion ? (
           <div className="mt-4 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900">
-            Backfill controls are locked until you unlock admin access on{" "}
-            <Link href="/admin/login?next=%2Fsources%2Fbackfill" className="font-medium underline">
-              the admin login page
-            </Link>
-            .
+            Backfill controls are limited to admins so historical ingestion stays deliberate and safe.
           </div>
         ) : null}
       </section>
@@ -118,7 +115,7 @@ export default async function BackfillQueuePage() {
               <Input name="keywords" placeholder="Optional extra keywords" />
               <div className="md:col-span-2 flex items-center justify-between gap-3">
                 <p className="text-sm text-muted-foreground">Keyword sets are only search hints. Articles still land in review before anything becomes a project or show.</p>
-                <Button type="submit" disabled={!adminUnlocked || !backfillWritable}>
+                <Button type="submit" disabled={!canManageIngestion || !backfillWritable}>
                   <Search className="h-4 w-4" /> Queue Jobs
                 </Button>
               </div>
@@ -142,7 +139,7 @@ export default async function BackfillQueuePage() {
               <p className="text-sm text-muted-foreground">Runs one queued job at a time so the queue stays slow, safe, and reviewable.</p>
             </div>
             <form action={runNextBackfillJobAction}>
-              <Button type="submit" disabled={!adminUnlocked || !backfillWritable}>
+              <Button type="submit" disabled={!canManageIngestion || !backfillWritable}>
                 <Play className="h-4 w-4" /> Run Next
               </Button>
             </form>

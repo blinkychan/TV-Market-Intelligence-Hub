@@ -1,3 +1,6 @@
+import type { AuditLogEntry } from "@/lib/audit";
+import type { TeamNoteRecord } from "@/lib/team-notes";
+
 export type RelationshipProject = {
   id: string;
   title: string;
@@ -64,6 +67,8 @@ export type CompanyDetailData = {
   type: string;
   notes: string | null;
   projects: RelationshipProject[];
+  changeHistory?: AuditLogEntry[];
+  teamNotes?: TeamNoteRecord[];
 };
 
 export type PersonDetailData = {
@@ -74,4 +79,6 @@ export type PersonDetailData = {
   reps: string | null;
   notes: string | null;
   projects: RelationshipProject[];
+  changeHistory?: AuditLogEntry[];
+  teamNotes?: TeamNoteRecord[];
 };

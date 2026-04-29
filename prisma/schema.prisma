@@ -58,9 +58,36 @@ enum PersonRole {
   director
 }
 
+enum UserRole {
+  admin
+  editor
+  viewer
+}
+
+enum CurrentShowSeasonType {
+  new_series
+  returning_series
+  limited_series
+  special
+  finale
+}
+
+enum DuplicateStatus {
+  not_duplicate
+  possible_duplicate
+  confirmed_duplicate
+  merged
+}
+
+enum SavedViewVisibility {
+  private
+  team
+}
+
 model Project {
   id                    String         @id @default(cuid())
   title                 String
+  aliases               String?
   type                  ProjectType
   status                ProjectStatus
   logline               String?
@@ -85,6 +112,10 @@ model Project {
   sourceUrl             String?
   sourcePublication     String?
   confidenceScore       Float          @default(0.7)
+  duplicateGroupId      String?
+  duplicateConfidence   Float?
+  possibleDuplicateOfId String?
+  duplicateStatus       DuplicateStatus @default(not_duplicate)
   needsReview           Boolean        @default(false)
   notes                 String?
   createdAt             DateTime       @default(now())
@@ -100,11 +131,14 @@ model Project {
   @@index([countryOfOrigin])
   @@index([announcementDate])
   @@index([premiereDate])
+  @@index([duplicateGroupId])
+  @@index([duplicateStatus])
 }
 
 model CurrentShow {
   id                    String   @id @default(cuid())
   title                 String
+  aliases               String?
   networkOrPlatform     String
   premiereDate          DateTime?
   finaleDate            DateTime?
@@ -115,7 +149,20 @@ model CurrentShow {
   studio                String?
   productionCompanies   String?
   country               String?
+  sourceType            String?
+  sourceReliability     String?
+  seasonType            CurrentShowSeasonType?
+  premiereTime          String?
+  episodeTitle          String?
+  episodeNumber         Int?
+  airPattern            String?
+  verifiedAt            DateTime?
+  needsVerification     Boolean  @default(false)
   sourceUrl             String?
+  duplicateGroupId      String?
+  duplicateConfidence   Float?
+  possibleDuplicateOfId String?
+  duplicateStatus       DuplicateStatus @default(not_duplicate)
   notes                 String?
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
@@ -126,13 +173,42 @@ model CurrentShow {
   @@index([networkOrPlatform])
   @@index([status])
   @@index([genre])
+  @@index([seasonType])
+  @@index([needsVerification])
+  @@index([verifiedAt])
+  @@index([duplicateGroupId])
+  @@index([duplicateStatus])
+}
+
+model CurrentTvSource {
+  id                String   @id @default(cuid())
+  name              String
+  sourceType        String
+  url               String?
+  category          String
+  enabled           Boolean  @default(true)
+  sourceReliability String?
+  lastChecked       DateTime?
+  notes             String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([name])
+  @@index([sourceType])
+  @@index([category])
+  @@index([enabled])
 }
 
 model Buyer {
   id            String         @id @default(cuid())
   name          String         @unique
+  aliases       String?
   type          BuyerType
   parentCompany String?
+  duplicateGroupId      String?
+  duplicateConfidence   Float?
+  possibleDuplicateOfId String?
+  duplicateStatus       DuplicateStatus @default(not_duplicate)
   notes         String?
   projects      Project[]
   relationships Relationship[]
@@ -141,12 +217,19 @@ model Buyer {
 
   @@index([type])
   @@index([parentCompany])
+  @@index([duplicateGroupId])
+  @@index([duplicateStatus])
 }
 
 model Company {
   id                     String         @id @default(cuid())
   name                   String         @unique
+  aliases                String?
   type                   CompanyType
+  duplicateGroupId       String?
+  duplicateConfidence    Float?
+  possibleDuplicateOfId  String?
+  duplicateStatus        DuplicateStatus @default(not_duplicate)
   notes                  String?
   studioProjects         Project[]      @relation("StudioProjects")
   productionProjects     Project[]      @relation("ProjectProductionCompanies")
@@ -155,14 +238,21 @@ model Company {
   updatedAt              DateTime       @updatedAt
 
   @@index([type])
+  @@index([duplicateGroupId])
+  @@index([duplicateStatus])
 }
 
 model Person {
   id            String         @id @default(cuid())
   name          String         @unique
+  aliases       String?
   role          PersonRole
   company       String?
   reps          String?
+  duplicateGroupId      String?
+  duplicateConfidence   Float?
+  possibleDuplicateOfId String?
+  duplicateStatus       DuplicateStatus @default(not_duplicate)
   notes         String?
   projects      Project[]      @relation("ProjectPeople")
   relationships Relationship[]
@@ -171,6 +261,8 @@ model Person {
 
   @@index([role])
   @@index([company])
+  @@index([duplicateGroupId])
+  @@index([duplicateStatus])
 }
 
 model Article {
@@ -178,6 +270,7 @@ model Article {
   url                   String       @unique
   publication           String?
   headline              String
+  aliases               String?
   publishedDate         DateTime?
   summary               String?
   rawText               String?
@@ -204,6 +297,8 @@ model Article {
   confidenceScore       Float?
   extractedProjectTitle String?
   extractedFormat       String?
+  extractedGenre        String?
+  extractedSourceMaterial String?
   extractedStatus       String?
   extractedLogline      String?
   extractedBuyer        String?
@@ -211,11 +306,20 @@ model Article {
   extractedCompanies    String?
   extractedPeople       String?
   extractedCountry      String?
+  extractedIsAcquisition Boolean?
+  extractedIsCoProduction Boolean?
+  extractedIsInternational Boolean?
   extractedPremiereDate DateTime?
   extractedAnnouncementDate DateTime?
   extractedRelationships String?
   extractedFieldsNeedingReview String?
   extractedDeduplicationNotes String?
+  extractedStructuredDataJson Json?
+  aiExtractionError     String?
+  duplicateGroupId      String?
+  duplicateConfidence   Float?
+  possibleDuplicateOfId String?
+  duplicateStatus       DuplicateStatus @default(not_duplicate)
   createdAt             DateTime     @default(now())
   updatedAt             DateTime     @updatedAt
 
@@ -230,6 +334,8 @@ model Article {
   @@index([suspectedCategory])
   @@index([linkedProjectId])
   @@index([linkedShowId])
+  @@index([duplicateGroupId])
+  @@index([duplicateStatus])
 }
 
 model RssFeed {
@@ -264,6 +370,68 @@ model IngestionRun {
   @@index([status])
   @@index([startedAt])
   @@index([completedAt])
+}
+
+model AuditLog {
+  id                String   @id @default(cuid())
+  entityType        String
+  entityId          String
+  action            String
+  changedByUserId   String?
+  changedByEmail    String?
+  previousValueJson Json?
+  newValueJson      Json?
+  reason            String?
+  source            String?
+  createdAt         DateTime @default(now())
+
+  @@index([entityType])
+  @@index([entityId])
+  @@index([action])
+  @@index([changedByUserId])
+  @@index([changedByEmail])
+  @@index([createdAt])
+}
+
+model SavedView {
+  id              String              @id @default(cuid())
+  name            String
+  description     String?
+  pageType        String
+  filtersJson     Json?
+  sortJson        Json?
+  columnsJson     Json?
+  visibility      SavedViewVisibility @default(private)
+  createdByUserId String?
+  createdByEmail  String?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  @@index([pageType])
+  @@index([visibility])
+  @@index([createdByUserId])
+  @@index([createdByEmail])
+  @@index([createdAt])
+}
+
+model TeamNote {
+  id                        String   @id @default(cuid())
+  entityType                String
+  entityId                  String
+  note                      String
+  tags                      String?
+  includeInNextWeeklyReport Boolean  @default(false)
+  createdByUserId           String?
+  createdByEmail            String?
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+
+  @@index([entityType])
+  @@index([entityId])
+  @@index([includeInNextWeeklyReport])
+  @@index([createdByUserId])
+  @@index([createdByEmail])
+  @@index([createdAt])
 }
 
 model BackfillJob {
@@ -321,4 +489,14 @@ model WeeklyReport {
 
   @@index([weekStart])
   @@index([generatedAt])
+}
+
+model UserProfile {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  role      UserRole @default(viewer)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([role])
 }

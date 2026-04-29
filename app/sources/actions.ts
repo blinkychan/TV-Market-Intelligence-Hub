@@ -2,12 +2,13 @@
 
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "node:crypto";
-import { requireAdminActionAccess } from "@/lib/admin-auth";
+import { recordAuditLog } from "@/lib/audit";
 import { appendMockIngestionResult } from "@/lib/mock-preview-store";
 import { logOperationalEvent } from "@/lib/ops-log";
 import { prisma } from "@/lib/prisma";
 import { ingestRSSFeeds } from "@/lib/rss-ingestion";
 import { inferSourceReliability } from "@/lib/source-reliability";
+import { requireAdminCapabilityAccess } from "@/lib/team-auth";
 
 function safeHost(urlValue: string) {
   try {
@@ -18,7 +19,7 @@ function safeHost(urlValue: string) {
 }
 
 export async function saveRssFeed(formData: FormData) {
-  await requireAdminActionAccess();
+  await requireAdminCapabilityAccess();
   const id = String(formData.get("id") ?? "");
   const publicationName = String(formData.get("publicationName") ?? "").trim();
   const feedUrl = String(formData.get("feedUrl") ?? "").trim();
@@ -48,14 +49,15 @@ export async function saveRssFeed(formData: FormData) {
 }
 
 export async function addManualArticle(formData: FormData) {
-  await requireAdminActionAccess();
+  await requireAdminCapabilityAccess();
   const url = String(formData.get("url") ?? "").trim();
   const publication = String(formData.get("publication") ?? "").trim() || safeHost(url);
   const notes = String(formData.get("notes") ?? "").trim();
   if (!url) return;
 
   try {
-    await prisma.article.upsert({
+    const existing = await prisma.article.findUnique({ where: { url } }).catch(() => null);
+    const article = await prisma.article.upsert({
       where: { url },
       update: {
         publication,
@@ -85,7 +87,7 @@ export async function addManualArticle(formData: FormData) {
       }
     });
 
-    await prisma.ingestionRun.create({
+    const run = await prisma.ingestionRun.create({
       data: {
         sourceType: "manual_url",
         sourceName: publication,
@@ -96,6 +98,25 @@ export async function addManualArticle(formData: FormData) {
         completedAt: new Date(),
         notes: `Manual article queued for review: ${url}`
       }
+    });
+
+    await recordAuditLog({
+      entityType: "Article",
+      entityId: article.id,
+      action: existing ? "updated" : "created",
+      previousValueJson: existing,
+      newValueJson: article,
+      reason: "Manual article URL added to review queue.",
+      source: "sources_manual_url"
+    });
+    await recordAuditLog({
+      entityType: "Article",
+      entityId: article.id,
+      action: "imported",
+      previousValueJson: null,
+      newValueJson: { ingestionRunId: run.id, url },
+      reason: "Manual article queued for review.",
+      source: "manual_url"
     });
   } catch {
     await appendMockIngestionResult({
@@ -156,9 +177,17 @@ export async function addManualArticle(formData: FormData) {
 }
 
 export async function runRssIngestion() {
-  await requireAdminActionAccess();
+  await requireAdminCapabilityAccess();
   try {
     await ingestRSSFeeds("real");
+    await recordAuditLog({
+      entityType: "Article",
+      entityId: "rss-batch",
+      action: "imported",
+      newValueJson: { mode: "real" },
+      reason: "Manual RSS ingestion run started from sources page.",
+      source: "rss"
+    });
   } catch (error) {
     logOperationalEvent("error", "RSS ingestion failed.", {
       sourceType: "rss",
@@ -183,9 +212,17 @@ export async function runRssIngestion() {
 }
 
 export async function runMockRssIngestion() {
-  await requireAdminActionAccess();
+  await requireAdminCapabilityAccess();
   try {
     await ingestRSSFeeds("mock");
+    await recordAuditLog({
+      entityType: "Article",
+      entityId: "rss-mock-batch",
+      action: "imported",
+      newValueJson: { mode: "mock" },
+      reason: "Mock RSS ingestion run started from sources page.",
+      source: "rss_mock"
+    });
   } catch (error) {
     logOperationalEvent("warn", "Mock RSS ingestion failed.", {
       sourceType: "rss_mock",
@@ -212,7 +249,7 @@ export async function runMockRssIngestion() {
 }
 
 export async function saveBackfillRequest(formData: FormData) {
-  await requireAdminActionAccess();
+  await requireAdminCapabilityAccess();
   const source = String(formData.get("source") ?? "").trim();
   const month = String(formData.get("month") ?? "").trim();
   const year = String(formData.get("year") ?? "").trim();

@@ -2,25 +2,58 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import { SavedViewsPanel } from "@/components/shared/saved-views-panel";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Select } from "@/components/ui/input";
+import { Input, Select } from "@/components/ui/input";
+import type { SavedViewRecord } from "@/lib/saved-views";
 import type { NetworkNode, RelationshipIndexData } from "@/components/relationships/types";
 import { humanize } from "@/lib/utils";
 
 export function RelationshipIndex({
   data,
   dataSource,
-  errorMessage
+  errorMessage,
+  companySavedViews = [],
+  peopleSavedViews = [],
+  currentUserEmail = null,
+  canCreateTeamView = false,
+  canManageAllSavedViews = false
 }: {
   data: RelationshipIndexData;
   dataSource: "database" | "mock";
   errorMessage?: string;
+  companySavedViews?: SavedViewRecord[];
+  peopleSavedViews?: SavedViewRecord[];
+  currentUserEmail?: string | null;
+  canCreateTeamView?: boolean;
+  canManageAllSavedViews?: boolean;
 }) {
   const [tab, setTab] = useState<"companies" | "people" | "map">("companies");
+  const [query, setQuery] = useState("");
+
+  function applySavedView(view: SavedViewRecord) {
+    const filters = (view.filtersJson ?? {}) as Record<string, unknown>;
+    const nextTab = String(filters.tab ?? "companies");
+    setTab(nextTab === "people" ? "people" : nextTab === "map" ? "map" : "companies");
+    setQuery(String(filters.query ?? ""));
+  }
+
+  const activeSavedViews = tab === "people" ? peopleSavedViews : companySavedViews;
 
   return (
     <div className="space-y-5">
+      <SavedViewsPanel
+        pageType={tab === "people" ? "people" : "companies"}
+        savedViews={activeSavedViews}
+        returnPath="/companies"
+        currentState={{ filtersJson: { tab, query } }}
+        canCreateTeamView={canCreateTeamView}
+        currentUserEmail={currentUserEmail}
+        canManageAll={canManageAllSavedViews}
+        canWrite={dataSource === "database"}
+        onLoadView={applySavedView}
+      />
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-white p-4 shadow-panel">
         <div className="flex flex-wrap gap-2">
           {[
@@ -42,15 +75,22 @@ export function RelationshipIndex({
         </Badge>
       </div>
       {errorMessage ? <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">Database unavailable, showing mock preview data. Detail: {errorMessage}</div> : null}
-      {tab === "companies" ? <CompaniesTab data={data} /> : null}
-      {tab === "people" ? <PeopleTab data={data} /> : null}
+      <div className="rounded-lg border bg-white p-4 shadow-panel">
+        <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search companies, talent, buyers, or connected entities" />
+      </div>
+      {tab === "companies" ? <CompaniesTab data={data} query={query} /> : null}
+      {tab === "people" ? <PeopleTab data={data} query={query} /> : null}
       {tab === "map" ? <RelationshipMap data={data} /> : null}
     </div>
   );
 }
 
-function CompaniesTab({ data }: { data: RelationshipIndexData }) {
-  if (!data.companies.length) return <EmptyState text="No companies available." />;
+function CompaniesTab({ data, query }: { data: RelationshipIndexData; query: string }) {
+  const filteredCompanies = data.companies.filter((company) =>
+    [company.name, company.type, ...company.connectedBuyers, ...company.connectedPeople].join(" ").toLowerCase().includes(query.toLowerCase())
+  );
+
+  if (!filteredCompanies.length) return <EmptyState text="No companies available." />;
   return (
     <div className="overflow-hidden rounded-lg border bg-white shadow-panel">
       <table className="w-full text-sm">
@@ -58,7 +98,7 @@ function CompaniesTab({ data }: { data: RelationshipIndexData }) {
           <tr><th className="p-3">Name</th><th className="p-3">Type</th><th className="p-3">Projects</th><th className="p-3">Connected Buyers</th><th className="p-3">Connected People</th></tr>
         </thead>
         <tbody>
-          {data.companies.map((company) => (
+          {filteredCompanies.map((company) => (
             <tr key={company.id} className="border-t hover:bg-slate-50">
               <td className="p-3"><Link className="font-semibold text-primary hover:underline" href={`/companies/${company.id}`}>{company.name}</Link></td>
               <td className="p-3">{humanize(company.type)}</td>
@@ -73,8 +113,12 @@ function CompaniesTab({ data }: { data: RelationshipIndexData }) {
   );
 }
 
-function PeopleTab({ data }: { data: RelationshipIndexData }) {
-  if (!data.people.length) return <EmptyState text="No people available." />;
+function PeopleTab({ data, query }: { data: RelationshipIndexData; query: string }) {
+  const filteredPeople = data.people.filter((person) =>
+    [person.name, person.role, person.company, person.reps, ...person.connectedBuyers, ...person.connectedCompanies].join(" ").toLowerCase().includes(query.toLowerCase())
+  );
+
+  if (!filteredPeople.length) return <EmptyState text="No people available." />;
   return (
     <div className="overflow-hidden rounded-lg border bg-white shadow-panel">
       <table className="w-full text-sm">
@@ -82,7 +126,7 @@ function PeopleTab({ data }: { data: RelationshipIndexData }) {
           <tr><th className="p-3">Name</th><th className="p-3">Role</th><th className="p-3">Company / Reps</th><th className="p-3">Projects</th><th className="p-3">Connected Buyers</th><th className="p-3">Connected Companies</th></tr>
         </thead>
         <tbody>
-          {data.people.map((person) => (
+          {filteredPeople.map((person) => (
             <tr key={person.id} className="border-t hover:bg-slate-50">
               <td className="p-3"><Link className="font-semibold text-primary hover:underline" href={`/talent/${person.id}`}>{person.name}</Link></td>
               <td className="p-3">{humanize(person.role)}</td>

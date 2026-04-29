@@ -49,7 +49,10 @@ Copy the Prisma connection strings and paste them into `.env.local`:
 DATABASE_URL=
 DIRECT_URL=
 NEXT_PUBLIC_APP_URL=http://localhost:3000
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_ANON_KEY=
 ADMIN_PASSWORD=
+OPENAI_API_KEY=
 ```
 
 Replace `[YOUR-PASSWORD]` in the copied Supabase URLs.
@@ -128,8 +131,11 @@ Required environment variables in Vercel:
 ```env
 DATABASE_URL=
 DIRECT_URL=
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_ANON_KEY=
 ADMIN_PASSWORD=
 NEXT_PUBLIC_APP_URL=
+OPENAI_API_KEY=
 ```
 
 Setup steps:
@@ -196,6 +202,76 @@ Protected today:
 - record-creation and linking actions from the review queue
 
 Use `/admin/login` to unlock an admin session in the browser.
+
+## Team Authentication
+
+The app now supports Supabase Auth email/password login at `/login`.
+
+Required team-auth environment variables:
+
+```env
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_ANON_KEY=
+```
+
+Optional:
+
+```env
+SUPABASE_SERVICE_ROLE_KEY=
+```
+
+The current implementation does not require the service role key.
+
+### Supabase settings to configure
+
+1. In Supabase, open `Authentication` -> `Providers`.
+2. Enable `Email` provider with email/password sign-in.
+3. In Supabase, create team users under `Authentication` -> `Users`, or invite them and let them set passwords.
+4. In the app, open `/admin/status`.
+5. In `Team Roles`, add each approved email address and assign:
+   - `admin`
+   - `editor`
+   - `viewer`
+
+Users must exist in both places:
+- Supabase Auth for sign-in
+- `UserProfile` in Prisma for approval and role assignment
+
+### Role behavior
+
+- `admin`: full access, ingestion controls, backfill controls, user/role management
+- `editor`: can edit records, run review actions, approve queue items, and create/link records
+- `viewer`: read-only access
+
+### Team login flow
+
+1. User signs in at `/login` with Supabase email/password.
+2. The app matches their email to `UserProfile`.
+3. If there is no matching profile, the user gets an access-denied state until an admin approves them.
+
+## AI Extraction
+
+Real AI extraction uses:
+
+```env
+OPENAI_API_KEY=
+```
+
+Setup:
+
+1. Add `OPENAI_API_KEY` to `.env.local` for local use.
+2. Add `OPENAI_API_KEY` to Vercel project environment variables for hosted use.
+3. Run `npx prisma db push` after schema updates so the new article extraction fields exist.
+
+Testing flow:
+
+- Open `/review`
+- fetch article bodies when available
+- run `Run AI Extraction` on a single article or `Run AI Extraction for Selected`
+- review the stored AI JSON snapshot and extracted fields
+- use `Approve and Create Records` only after human review
+
+If only a headline is available, extraction stays low-confidence and remains in review.
 
 ## Production QA Checklist
 

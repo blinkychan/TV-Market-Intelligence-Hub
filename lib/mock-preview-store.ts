@@ -48,8 +48,15 @@ function reviveState(raw: MockPreviewState): MockPreviewState {
       sourceReliability: article.sourceReliability ?? null,
       needsReview: article.needsReview ?? (article.extractionStatus === "Needs Review" || article.extractionStatus === "New"),
       extractionMode: article.extractionMode ?? null,
+      extractedGenre: article.extractedGenre ?? null,
+      extractedSourceMaterial: article.extractedSourceMaterial ?? null,
+      extractedIsAcquisition: article.extractedIsAcquisition ?? null,
+      extractedIsCoProduction: article.extractedIsCoProduction ?? null,
+      extractedIsInternational: article.extractedIsInternational ?? null,
       extractedFieldsNeedingReview: article.extractedFieldsNeedingReview ?? null,
-      extractedDeduplicationNotes: article.extractedDeduplicationNotes ?? null
+      extractedDeduplicationNotes: article.extractedDeduplicationNotes ?? null,
+      extractedStructuredDataJson: article.extractedStructuredDataJson ?? null,
+      aiExtractionError: article.aiExtractionError ?? null
     })),
     ingestionRuns: raw.ingestionRuns.map((run) => ({
       ...run,

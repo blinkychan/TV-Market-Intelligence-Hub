@@ -28,7 +28,7 @@ export default async function AdminLoginPage({ searchParams }: { searchParams: S
             <CardTitle className="mt-2 text-2xl">Production controls</CardTitle>
           </div>
           <p className="text-sm text-muted-foreground">
-            Use the shared admin password to unlock status checks, ingestion controls, backfill controls, and protected review actions.
+            Use the shared admin password to unlock status checks, ingestion controls, backfill controls, and protected review actions while Supabase team auth is being rolled out.
           </p>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -59,8 +59,8 @@ export default async function AdminLoginPage({ searchParams }: { searchParams: S
           </form>
 
           <div className="flex items-center justify-between text-sm">
-            <Link href="/" className="text-primary hover:underline">
-              Back to dashboard
+            <Link href="/login" className="text-primary hover:underline">
+              Team login
             </Link>
             <Link href={nextPath} className="text-muted-foreground hover:text-foreground">
               Go to requested page

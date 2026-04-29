@@ -2,6 +2,8 @@ import { DevelopmentTable } from "@/components/tables/development-table";
 import type { DevelopmentRow } from "@/components/tables/development-table";
 import { mockBuyerDetails } from "@/lib/mock-buyers";
 import { prisma } from "@/lib/prisma";
+import { getSavedViewsForPage } from "@/lib/saved-views";
+import { getCurrentUserContext } from "@/lib/team-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -76,6 +78,8 @@ async function getDevelopmentRows(): Promise<DevelopmentRow[]> {
 
 export default async function DevelopmentPage() {
   const rows = await getDevelopmentRows();
+  const auth = await getCurrentUserContext();
+  const savedViews = await getSavedViewsForPage("development_tracker").catch(() => []);
 
   return (
     <div className="space-y-5">
@@ -86,7 +90,14 @@ export default async function DevelopmentPage() {
           Search and filter development projects by buyer, studio, genre, year, country, status, and market flags.
         </p>
       </section>
-      <DevelopmentTable rows={rows} />
+      <DevelopmentTable
+        rows={rows}
+        savedViewsData={savedViews}
+        currentUserEmail={auth.user?.email ?? null}
+        canCreateTeamView={auth.canEditContent || auth.adminUnlocked}
+        canManageAllSavedViews={auth.canManageUsers || auth.adminUnlocked}
+        canWriteSavedViews
+      />
     </div>
   );
 }

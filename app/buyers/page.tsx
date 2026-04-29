@@ -2,6 +2,8 @@ import { BuyerList } from "@/components/buyers/buyer-list";
 import type { BuyerListItem } from "@/components/buyers/types";
 import { mockBuyerList } from "@/lib/mock-buyers";
 import { prisma } from "@/lib/prisma";
+import { getSavedViewsForPage } from "@/lib/saved-views";
+import { getCurrentUserContext } from "@/lib/team-auth";
 
 export const dynamic = "force-dynamic";
 
@@ -50,6 +52,8 @@ async function getBuyers(): Promise<{ buyers: BuyerListItem[]; dataSource: "data
 
 export default async function BuyersPage() {
   const { buyers, dataSource, errorMessage } = await getBuyers();
+  const auth = await getCurrentUserContext();
+  const savedViews = await getSavedViewsForPage("buyers").catch(() => []);
 
   return (
     <div className="space-y-6">
@@ -60,7 +64,15 @@ export default async function BuyersPage() {
           Compare buyer activity across development, current programming, acquisitions, co-productions, and relationships.
         </p>
       </section>
-      <BuyerList buyers={buyers} dataSource={dataSource} errorMessage={errorMessage} />
+      <BuyerList
+        buyers={buyers}
+        dataSource={dataSource}
+        errorMessage={errorMessage}
+        savedViews={savedViews}
+        currentUserEmail={auth.user?.email ?? null}
+        canCreateTeamView={auth.canEditContent || auth.adminUnlocked}
+        canManageAllSavedViews={auth.canManageUsers || auth.adminUnlocked}
+      />
     </div>
   );
 }

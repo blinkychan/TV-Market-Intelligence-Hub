@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
+import { ChangeHistoryPanel } from "@/components/audit/change-history";
 import { BreakdownBars } from "@/components/charts/breakdown-bars";
+import { TeamNotesPanel } from "@/components/shared/team-notes-panel";
 import { Badge, StatusBadge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { CompanyDetailData, PersonDetailData, RelationshipProject } from "@/components/relationships/types";
@@ -12,7 +14,21 @@ function countBy(values: string[]) {
   return Array.from(map.entries()).map(([label, count]) => ({ label, count })).sort((a, b) => b.count - a.count);
 }
 
-export function CompanyDetail({ company, dataSource, errorMessage }: { company: CompanyDetailData; dataSource: "database" | "mock"; errorMessage?: string }) {
+export function CompanyDetail({
+  company,
+  dataSource,
+  errorMessage,
+  currentUserEmail,
+  canManageAllNotes,
+  canWriteNotes
+}: {
+  company: CompanyDetailData;
+  dataSource: "database" | "mock";
+  errorMessage?: string;
+  currentUserEmail: string | null;
+  canManageAllNotes: boolean;
+  canWriteNotes: boolean;
+}) {
   const buyers = Array.from(new Set(company.projects.map((project) => project.buyer).filter(Boolean) as string[]));
   const people = Array.from(new Set(company.projects.flatMap((project) => project.people.map((person) => person.name))));
   const acqCoPro = company.projects.filter((project) => project.isAcquisition || project.isCoProduction).length;
@@ -26,11 +42,35 @@ export function CompanyDetail({ company, dataSource, errorMessage }: { company: 
         <Card className="shadow-panel"><CardHeader><CardTitle>Buyers They Work With</CardTitle></CardHeader><CardContent className="text-sm">{buyers.join(", ") || "None logged"}</CardContent></Card>
       </section>
       <ProjectTimeline projects={company.projects} />
+      <ChangeHistoryPanel title="Company Change History" logs={company.changeHistory ?? []} emptyText="No company-level history has been logged yet." />
+      <TeamNotesPanel
+        entityType="Company"
+        entityId={company.id}
+        notes={company.teamNotes ?? []}
+        returnPath={`/companies/${company.id}`}
+        currentUserEmail={currentUserEmail}
+        canManageAll={canManageAllNotes}
+        canWrite={canWriteNotes}
+      />
     </EntityFrame>
   );
 }
 
-export function PersonDetail({ person, dataSource, errorMessage }: { person: PersonDetailData; dataSource: "database" | "mock"; errorMessage?: string }) {
+export function PersonDetail({
+  person,
+  dataSource,
+  errorMessage,
+  currentUserEmail,
+  canManageAllNotes,
+  canWriteNotes
+}: {
+  person: PersonDetailData;
+  dataSource: "database" | "mock";
+  errorMessage?: string;
+  currentUserEmail: string | null;
+  canManageAllNotes: boolean;
+  canWriteNotes: boolean;
+}) {
   const buyers = Array.from(new Set(person.projects.map((project) => project.buyer).filter(Boolean) as string[]));
   const companies = Array.from(new Set(person.projects.flatMap((project) => [project.studio, ...project.productionCompanies.map((company) => company.name)]).filter(Boolean) as string[]));
 
@@ -43,6 +83,16 @@ export function PersonDetail({ person, dataSource, errorMessage }: { person: Per
         <Card className="shadow-panel"><CardHeader><CardTitle>Companies / Studios</CardTitle></CardHeader><CardContent className="text-sm">{companies.join(", ") || "None logged"}</CardContent></Card>
       </section>
       <ProjectTimeline projects={person.projects} />
+      <ChangeHistoryPanel title="Person Change History" logs={person.changeHistory ?? []} emptyText="No people/talent history has been logged yet." />
+      <TeamNotesPanel
+        entityType="Person"
+        entityId={person.id}
+        notes={person.teamNotes ?? []}
+        returnPath={`/talent/${person.id}`}
+        currentUserEmail={currentUserEmail}
+        canManageAll={canManageAllNotes}
+        canWrite={canWriteNotes}
+      />
     </EntityFrame>
   );
 }

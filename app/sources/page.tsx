@@ -6,11 +6,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Table, Td, Th } from "@/components/ui/table";
-import { isAdminSessionValid } from "@/lib/admin-auth";
 import { readMockPreviewState } from "@/lib/mock-preview-store";
 import { mockFeeds, mockIngestionRuns } from "@/lib/mock-sources";
 import { prisma } from "@/lib/prisma";
 import { canUseMockPreview, mockPreviewDisabledReason } from "@/lib/runtime-mode";
+import { getCurrentUserContext } from "@/lib/team-auth";
 import { formatDate, humanize } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -38,7 +38,7 @@ type RunRecord = {
 };
 
 export default async function SourcesPage() {
-  const adminUnlocked = await isAdminSessionValid();
+  const auth = await getCurrentUserContext();
   let dataSource: "database" | "mock" = "database";
   let feeds: FeedRecord[] = [];
   let history: RunRecord[] = [];
@@ -66,7 +66,8 @@ export default async function SourcesPage() {
   const networkPressFeeds = feeds.filter((feed) => feed.category.toLowerCase().includes("press")).length;
   const latestRssRun = history.find((run) => run.sourceType === "rss" || run.sourceType === "rss_mock" || run.sourceType === "rss_placeholder");
   const databaseWritable = dataSource === "database" && !errorMessage;
-  const canRunMock = adminUnlocked && canUseMockPreview();
+  const canManageIngestion = auth.canManageIngestion || auth.adminUnlocked;
+  const canRunMock = canManageIngestion && canUseMockPreview();
 
   return (
     <div className="space-y-6">
@@ -88,9 +89,9 @@ export default async function SourcesPage() {
             {dataSource === "mock" ? `Preview data is active because the source registry could not be read: ${errorMessage}` : mockPreviewDisabledReason() ?? errorMessage}
           </div>
         ) : null}
-        {!adminUnlocked ? (
+        {!canManageIngestion ? (
           <div className="mt-4 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900">
-            Ingestion controls are locked until you unlock admin access on <Link href="/admin/login?next=%2Fsources" className="font-medium underline">the admin login page</Link>.
+            These controls are limited to admins. The temporary admin password can still unlock hosted ingestion while roles are being rolled out.
           </div>
         ) : null}
       </section>
@@ -134,7 +135,7 @@ export default async function SourcesPage() {
             </div>
             <div className="flex flex-wrap gap-2">
               <form action={runRssIngestion}>
-                <Button type="submit" variant="secondary" disabled={!databaseWritable || !adminUnlocked}>
+                <Button type="submit" variant="secondary" disabled={!databaseWritable || !canManageIngestion}>
                   <Radio className="h-4 w-4" /> Run RSS Ingestion
                 </Button>
               </form>
@@ -184,17 +185,17 @@ export default async function SourcesPage() {
                       return (
                         <tr key={feed.id}>
                           <Td className="min-w-44">
-                            <Input form={formId} name="publicationName" defaultValue={feed.publicationName} disabled={!databaseWritable || !adminUnlocked} />
+                            <Input form={formId} name="publicationName" defaultValue={feed.publicationName} disabled={!databaseWritable || !canManageIngestion} />
                           </Td>
                           <Td className="min-w-80">
-                            <Input form={formId} name="feedUrl" defaultValue={feed.feedUrl} disabled={!databaseWritable || !adminUnlocked} />
+                            <Input form={formId} name="feedUrl" defaultValue={feed.feedUrl} disabled={!databaseWritable || !canManageIngestion} />
                           </Td>
                           <Td className="min-w-40">
-                            <Input form={formId} name="category" defaultValue={feed.category} disabled={!databaseWritable || !adminUnlocked} />
+                            <Input form={formId} name="category" defaultValue={feed.category} disabled={!databaseWritable || !canManageIngestion} />
                           </Td>
                           <Td>
                             <label className="inline-flex items-center gap-2 text-sm">
-                              <input form={formId} type="checkbox" name="enabled" defaultChecked={feed.enabled} disabled={!databaseWritable || !adminUnlocked} />
+                              <input form={formId} type="checkbox" name="enabled" defaultChecked={feed.enabled} disabled={!databaseWritable || !canManageIngestion} />
                               <span>{feed.enabled ? "On" : "Off"}</span>
                             </label>
                           </Td>
@@ -202,7 +203,7 @@ export default async function SourcesPage() {
                           <Td>
                             <form id={formId} action={saveRssFeed}>
                               <input type="hidden" name="id" value={feed.id} />
-                              <Button type="submit" variant="ghost" className="w-full" disabled={!databaseWritable || !adminUnlocked}>
+                              <Button type="submit" variant="ghost" className="w-full" disabled={!databaseWritable || !canManageIngestion}>
                                 Save
                               </Button>
                             </form>
@@ -220,10 +221,10 @@ export default async function SourcesPage() {
             )}
 
             <form action={saveRssFeed} className="grid gap-3 rounded-lg border bg-slate-50 p-4 md:grid-cols-[1fr_1.4fr_0.7fr_auto]">
-              <Input name="publicationName" placeholder="Publication name" disabled={!databaseWritable || !adminUnlocked} />
-              <Input name="feedUrl" placeholder="https://example.com/feed.xml" disabled={!databaseWritable || !adminUnlocked} />
-              <Input name="category" placeholder="Category" disabled={!databaseWritable || !adminUnlocked} />
-              <Button type="submit" disabled={!databaseWritable || !adminUnlocked}>
+              <Input name="publicationName" placeholder="Publication name" disabled={!databaseWritable || !canManageIngestion} />
+              <Input name="feedUrl" placeholder="https://example.com/feed.xml" disabled={!databaseWritable || !canManageIngestion} />
+              <Input name="category" placeholder="Category" disabled={!databaseWritable || !canManageIngestion} />
+              <Button type="submit" disabled={!databaseWritable || !canManageIngestion}>
                 <Plus className="h-4 w-4" /> Add Feed
               </Button>
             </form>
@@ -244,16 +245,16 @@ export default async function SourcesPage() {
             </CardHeader>
             <CardContent>
               <form action={addManualArticle} className="space-y-3">
-                <Input name="url" type="url" placeholder="https://publication.example/story" disabled={!databaseWritable || !adminUnlocked} />
-                <Input name="publication" placeholder="Publication (optional)" disabled={!databaseWritable || !adminUnlocked} />
+                <Input name="url" type="url" placeholder="https://publication.example/story" disabled={!databaseWritable || !canManageIngestion} />
+                <Input name="publication" placeholder="Publication (optional)" disabled={!databaseWritable || !canManageIngestion} />
                 <textarea
                   name="notes"
                   rows={4}
                   placeholder="Quick note for the review queue"
-                  disabled={!databaseWritable || !adminUnlocked}
+                  disabled={!databaseWritable || !canManageIngestion}
                   className="w-full rounded-md border bg-background px-3 py-2 text-sm"
                 />
-                <Button type="submit" className="w-full" disabled={!databaseWritable || !adminUnlocked}>
+                <Button type="submit" className="w-full" disabled={!databaseWritable || !canManageIngestion}>
                   <FileText className="h-4 w-4" /> Add to Review Queue
                 </Button>
               </form>

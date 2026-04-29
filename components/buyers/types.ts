@@ -1,3 +1,6 @@
+import type { AuditLogEntry } from "@/lib/audit";
+import type { TeamNoteRecord } from "@/lib/team-notes";
+
 export type BuyerProjectSummary = {
   id: string;
   title: string;
@@ -72,6 +75,8 @@ export type BuyerDetailData = {
   companies?: BuyerCompanySummary[];
   people?: BuyerPersonSummary[];
   relationships?: BuyerRelationshipSummary[];
+  changeHistory?: AuditLogEntry[];
+  teamNotes?: TeamNoteRecord[];
 };
 
 export type BuyerListItem = {

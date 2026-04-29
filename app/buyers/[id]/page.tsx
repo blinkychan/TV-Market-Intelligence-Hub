@@ -9,8 +9,12 @@ import type {
   BuyerProjectSummary,
   BuyerRelationshipSummary
 } from "@/components/buyers/types";
+import { getAuditHistory } from "@/lib/audit";
+import { mockAuditLogs } from "@/lib/mock-audit";
 import { mockBuyerDetails } from "@/lib/mock-buyers";
 import { prisma } from "@/lib/prisma";
+import { getCurrentUserContext } from "@/lib/team-auth";
+import { getTeamNotes } from "@/lib/team-notes";
 
 export const dynamic = "force-dynamic";
 
@@ -153,13 +157,15 @@ async function getBuyerDetail(id: string): Promise<{ buyer: BuyerDetailData | nu
         ),
         relationships: buyer.projects.flatMap((project: BuyerDetailProjectPayload) =>
           project.relationships.map((relationship: BuyerDetailRelationshipPayload) => toBuyerRelationshipSummary(relationship))
-        )
+        ),
+        changeHistory: await getAuditHistory("Buyer", buyer.id).catch(() => []),
+        teamNotes: await getTeamNotes("Buyer", buyer.id).catch(() => [])
       }
     };
   } catch (error) {
     const mockBuyer = mockBuyerDetails.find((item) => item.id === id) ?? mockBuyerDetails[0] ?? null;
     return {
-      buyer: mockBuyer,
+      buyer: mockBuyer ? { ...mockBuyer, changeHistory: mockAuditLogs.filter((log) => log.entityType === "Buyer" && log.entityId === mockBuyer.id) } : mockBuyer,
       dataSource: "mock",
       errorMessage: error instanceof Error ? error.message : "Unknown database error."
     };
@@ -169,8 +175,18 @@ async function getBuyerDetail(id: string): Promise<{ buyer: BuyerDetailData | nu
 export default async function BuyerDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const { buyer, dataSource, errorMessage } = await getBuyerDetail(id);
+  const auth = await getCurrentUserContext();
 
   if (!buyer) notFound();
 
-  return <BuyerDetail buyer={buyer} dataSource={dataSource} errorMessage={errorMessage} />;
+  return (
+    <BuyerDetail
+      buyer={buyer}
+      dataSource={dataSource}
+      errorMessage={errorMessage}
+      currentUserEmail={auth.user?.email ?? null}
+      canManageAllNotes={auth.canManageUsers || auth.adminUnlocked}
+      canWriteNotes={dataSource === "database"}
+    />
+  );
 }
