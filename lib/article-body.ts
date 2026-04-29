@@ -126,7 +126,8 @@ export async function checkRobotsAllowed(url: string): Promise<boolean | null> {
 
     const body = await response.text();
     const robots = robotsParser(robotsUrl, body);
-    return robots.isAllowed(url, BODY_USER_AGENT);
+    const allowed = robots.isAllowed(url, BODY_USER_AGENT);
+    return typeof allowed === "boolean" ? allowed : null;
   } catch {
     return null;
   }
