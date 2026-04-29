@@ -116,6 +116,14 @@ function backfillPriorityScore(status: string) {
   return 4;
 }
 
+function normalizeBackfillJobStatus(status: string): BackfillJobStatus {
+  if (status === "queued" || status === "running" || status === "completed" || status === "failed" || status === "paused") {
+    return status;
+  }
+
+  return "queued";
+}
+
 type BackfillJobDraft = Omit<MockBackfillJob, "id" | "createdAt" | "updatedAt" | "completedAt">;
 
 function compareBackfillPriority(
@@ -202,6 +210,27 @@ async function createBackfillLog(data: {
       notes: data.notes
     }
   });
+}
+
+function normalizeBackfillJobRecord(job: {
+  id: string;
+  source: string;
+  year: number;
+  month: number;
+  keywords: string | null;
+  status: string;
+  articlesFound: number;
+  articlesSaved: number;
+  duplicatesSkipped: number;
+  lastError: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+  completedAt: Date | null;
+}): BackfillJobRecord {
+  return {
+    ...job,
+    status: normalizeBackfillJobStatus(job.status)
+  };
 }
 
 export async function createBackfillJobs(input: BackfillJobInput): Promise<{ count: number; dataSource: "database" | "mock" }> {
@@ -326,7 +355,12 @@ async function runNextDatabaseBackfillJob(): Promise<RunNextBackfillSummary> {
   });
 
   try {
-    const candidates = await fetchHistoricalCandidates(nextJob, "database");
+    const normalizedNextJob = {
+      ...nextJob,
+      status: normalizeBackfillJobStatus(nextJob.status)
+    };
+
+    const candidates = await fetchHistoricalCandidates(normalizedNextJob, "database");
     const existingUrls = new Set((await prisma.article.findMany({ select: { url: true } })).map((article) => article.url));
 
     let articlesSaved = 0;
@@ -365,7 +399,7 @@ async function runNextDatabaseBackfillJob(): Promise<RunNextBackfillSummary> {
     const note =
       candidates.length === 0
         ? "No historical search adapter is configured yet. Plug in a search API or use manual URL entry for live backfill retrieval."
-        : `Processed one backfill batch from ${summarizeJobSource(nextJob)}.`;
+        : `Processed one backfill batch from ${summarizeJobSource(normalizedNextJob)}.`;
 
     await prisma.backfillJob.update({
       where: { id: nextJob.id },
@@ -380,7 +414,7 @@ async function runNextDatabaseBackfillJob(): Promise<RunNextBackfillSummary> {
     });
 
     await createBackfillLog({
-      sourceName: summarizeJobSource(nextJob),
+      sourceName: summarizeJobSource(normalizedNextJob),
       status,
       itemsFetched: candidates.length,
       itemsSaved: articlesSaved,
@@ -392,9 +426,9 @@ async function runNextDatabaseBackfillJob(): Promise<RunNextBackfillSummary> {
       dataSource: "database",
       jobId: nextJob.id,
       status: status === "completed" ? "completed" : "failed",
-      source: nextJob.source,
-      year: nextJob.year,
-      month: nextJob.month,
+      source: normalizedNextJob.source,
+      year: normalizedNextJob.year,
+      month: normalizedNextJob.month,
       articlesFound: candidates.length,
       articlesSaved,
       duplicatesSkipped,
@@ -413,7 +447,7 @@ async function runNextDatabaseBackfillJob(): Promise<RunNextBackfillSummary> {
     });
 
     await createBackfillLog({
-      sourceName: summarizeJobSource(nextJob),
+      sourceName: summarizeJobSource(normalizedNextJob),
       status: "failed",
       itemsFetched: 0,
       itemsSaved: 0,
@@ -425,9 +459,9 @@ async function runNextDatabaseBackfillJob(): Promise<RunNextBackfillSummary> {
       dataSource: "database",
       jobId: nextJob.id,
       status: "failed",
-      source: nextJob.source,
-      year: nextJob.year,
-      month: nextJob.month,
+      source: normalizedNextJob.source,
+      year: normalizedNextJob.year,
+      month: normalizedNextJob.month,
       articlesFound: 0,
       articlesSaved: 0,
       duplicatesSkipped: 0,
@@ -584,7 +618,7 @@ export async function getBackfillDashboardData(): Promise<BackfillDashboardData>
       prisma.ingestionRun.findMany({ where: { sourceType: "backfill" }, orderBy: { startedAt: "desc" }, take: 12 })
     ]);
 
-    const sortedJobs = [...jobs].sort(compareBackfillPriority);
+    const sortedJobs = jobs.map(normalizeBackfillJobRecord).sort(compareBackfillPriority);
 
     return {
       dataSource: "database",
