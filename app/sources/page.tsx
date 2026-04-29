@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Activity, FileText, Plus, Radio, Upload } from "lucide-react";
+import { Activity, Database, FileText, Plus, Radio, Upload } from "lucide-react";
 import { addManualArticle, runMockRssIngestion, runRssIngestion, saveRssFeed } from "./actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
