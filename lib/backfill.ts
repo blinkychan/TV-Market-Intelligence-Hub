@@ -349,17 +349,17 @@ async function runNextDatabaseBackfillJob(): Promise<RunNextBackfillSummary> {
     };
   }
 
+  const normalizedNextJob: BackfillJobRecord = {
+    ...nextJob,
+    status: normalizeBackfillJobStatus(nextJob.status)
+  };
+
   await prisma.backfillJob.update({
     where: { id: nextJob.id },
     data: { status: "running", lastError: null }
   });
 
   try {
-    const normalizedNextJob = {
-      ...nextJob,
-      status: normalizeBackfillJobStatus(nextJob.status)
-    };
-
     const candidates = await fetchHistoricalCandidates(normalizedNextJob, "database");
     const existingUrls = new Set((await prisma.article.findMany({ select: { url: true } })).map((article) => article.url));
 
