@@ -4,6 +4,7 @@ import { FEEDS } from "@/lib/feeds";
 import { appendMockIngestionResult, readMockPreviewState } from "@/lib/mock-preview-store";
 import { mockFeedEntries } from "@/lib/mock-rss";
 import { prisma } from "@/lib/prisma";
+import { inferSourceReliability } from "@/lib/source-reliability";
 
 const parser = new Parser();
 
@@ -150,6 +151,16 @@ export async function ingestRSSFeeds(mode: IngestionMode = "real"): Promise<Inge
           publishedDate: item.publishedAt ? new Date(item.publishedAt) : null,
           url,
           sourceType: "rss",
+          rawHtml: null,
+          extractedText: null,
+          extractedExcerpt: item.summary ? item.summary.slice(0, 280) : null,
+          extractionMethod: null,
+          bodyFetchStatus: "not_fetched",
+          bodyFetchError: null,
+          bodyFetchedAt: null,
+          robotsAllowed: null,
+          paywallLikely: false,
+          sourceReliability: inferSourceReliability(feed.publication, url),
           extractionStatus: "Needs Review",
           suspectedCategory: inferCategory(item.title),
           confidenceScore: 0.61,
@@ -196,6 +207,16 @@ export async function ingestRSSFeeds(mode: IngestionMode = "real"): Promise<Inge
             publication: article.publication,
             publishedDate: article.publishedDate,
             summary: article.summary,
+            rawHtml: null,
+            extractedText: null,
+            extractedExcerpt: article.summary ? article.summary.slice(0, 280) : null,
+            extractionMethod: null,
+            bodyFetchStatus: "not_fetched",
+            bodyFetchError: null,
+            bodyFetchedAt: null,
+            robotsAllowed: null,
+            paywallLikely: false,
+            sourceReliability: inferSourceReliability(article.publication, article.url),
             sourceType: "rss",
             ingestionSource: "RSS",
             extractionStatus: "Needs Review",
@@ -291,6 +312,16 @@ export async function ingestRSSFeeds(mode: IngestionMode = "real"): Promise<Inge
           publication: feed.publicationName,
           publishedDate: item.publishedDate,
           summary: item.summary,
+          rawHtml: null,
+          extractedText: null,
+          extractedExcerpt: item.summary ? item.summary.slice(0, 280) : null,
+          extractionMethod: null,
+          bodyFetchStatus: "not_fetched",
+          bodyFetchError: null,
+          bodyFetchedAt: null,
+          robotsAllowed: null,
+          paywallLikely: false,
+          sourceReliability: inferSourceReliability(feed.publicationName, item.url),
           sourceType: "rss",
           ingestionSource: "RSS",
           extractionStatus: "Needs Review",

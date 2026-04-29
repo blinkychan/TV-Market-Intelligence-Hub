@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import "./globals.css";
+import { isAdminSessionValid } from "@/lib/admin-auth";
 import { navItems } from "@/lib/constants";
 import { Search } from "lucide-react";
 
@@ -9,7 +10,9 @@ export const metadata: Metadata = {
   description: "Local-first entertainment industry intelligence dashboard"
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  const adminUnlocked = await isAdminSessionValid();
+
   return (
     <html lang="en">
       <body>
@@ -49,11 +52,16 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 </div>
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   <span className="rounded-full bg-emerald-50 px-3 py-1 font-medium text-emerald-700 ring-1 ring-emerald-200">
-                    Local SQLite
+                    Supabase / Postgres
                   </span>
                   <span className="rounded-full bg-sky-50 px-3 py-1 font-medium text-sky-700 ring-1 ring-sky-200">
-                    No cloud required
+                    Vercel-ready
                   </span>
+                  {adminUnlocked ? (
+                    <span className="rounded-full bg-violet-50 px-3 py-1 font-medium text-violet-700 ring-1 ring-violet-200">
+                      Admin unlocked
+                    </span>
+                  ) : null}
                 </div>
               </div>
             </header>

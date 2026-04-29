@@ -1,11 +1,15 @@
 import { mockReviewArticles } from "@/lib/mock-review";
+import { inferSourceReliability } from "@/lib/source-reliability";
 
 type ArticleLike = {
   id: string;
   headline: string;
   summary?: string | null;
-  publishedDate?: Date | string | null;
+  extractedText?: string | null;
+  extractedExcerpt?: string | null;
   publication?: string | null;
+  url?: string | null;
+  publishedDate?: Date | string | null;
 };
 
 export type StructuredTVExtraction = {
@@ -34,6 +38,9 @@ export type StructuredTVExtraction = {
   suggestedRelationships: string | null;
   dedupeCandidate: boolean;
   dedupeReason: string | null;
+  sourceReliability: "high" | "medium" | "low";
+  extractionBasis: "body" | "excerpt" | "summary" | "headline";
+  warning: string | null;
   mode: "mock" | "placeholder";
 };
 
@@ -92,7 +99,12 @@ export async function extractStructuredTVData(
   article: ArticleLike,
   mode: "mock" | "placeholder" = "placeholder"
 ): Promise<StructuredTVExtraction> {
+  const sourceReliability = inferSourceReliability(article.publication, article.url);
+  const bodyText = article.extractedText?.trim() || "";
+  const excerptText = article.extractedExcerpt?.trim() || "";
   const summary = article.summary ?? "";
+  const extractionBasis = bodyText ? "body" : excerptText ? "excerpt" : summary ? "summary" : "headline";
+  const sourceText = bodyText || excerptText || summary || article.headline;
 
   if (mode === "mock") {
     const mock = mockLookup(article);
@@ -125,27 +137,34 @@ export async function extractStructuredTVData(
         suggestedRelationships: mock.extractedRelationships,
         dedupeCandidate: mock.extractionStatus === "Duplicate" || Boolean(mock.extractedDeduplicationNotes),
         dedupeReason: mock.extractedDeduplicationNotes ?? null,
+        sourceReliability: inferSourceReliability(mock.publication, mock.url),
+        extractionBasis:
+          mock.extractedText ? "body" : mock.extractedExcerpt ? "excerpt" : mock.summary ? "summary" : "headline",
+        warning: !mock.extractedText && !mock.extractedExcerpt && !mock.summary ? "Low confidence: headline-only extraction." : null,
         mode: "mock"
       };
     }
   }
 
-  const category = inferCategory(article.headline, summary);
-  const buyer = inferBuyer(article.headline);
+  const category = inferCategory(article.headline, sourceText);
+  const buyer = inferBuyer(sourceText);
   const title = inferTitle(article.headline);
-  const confidenceScore = category === "current_show" ? 0.78 : 0.66;
+  const confidenceBase = extractionBasis === "body" ? 0.84 : extractionBasis === "excerpt" ? 0.74 : extractionBasis === "summary" ? 0.68 : 0.42;
+  const confidenceScore = category === "current_show" ? confidenceBase + 0.04 : confidenceBase;
   const fieldsNeedingReview = [];
 
   if (!buyer) fieldsNeedingReview.push("buyer");
-  if (!summary) fieldsNeedingReview.push("logline");
+  if (!bodyText && !excerptText && !summary) fieldsNeedingReview.push("Low confidence: headline-only extraction.");
+  if (!bodyText && !excerptText) fieldsNeedingReview.push("logline");
   if (category === "current_show") fieldsNeedingReview.push("premiere date");
+  if (!bodyText) fieldsNeedingReview.push("body text unavailable");
 
   return {
     title,
     category,
     status: inferStatus(category, article.headline),
     format: category === "current_show" ? "Current series" : "Development project",
-    logline: summary || null,
+    logline: (bodyText || excerptText || summary) || null,
     buyer,
     studio: null,
     productionCompanies: [],
@@ -158,6 +177,9 @@ export async function extractStructuredTVData(
     suggestedRelationships: buyer ? `${buyer} attached to ${title}` : null,
     dedupeCandidate: false,
     dedupeReason: null,
+    sourceReliability,
+    extractionBasis,
+    warning: extractionBasis === "headline" ? "Low confidence: headline-only extraction." : null,
     mode: "placeholder"
   };
 }

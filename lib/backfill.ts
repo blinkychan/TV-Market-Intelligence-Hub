@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { endOfMonth, format, parse, startOfMonth } from "date-fns";
-import { BACKFILL_KEYWORD_SETS, mockHistoricalArticles, type MockBackfillJob } from "@/lib/mock-backfill";
+import { BACKFILL_KEYWORD_SETS, mockHistoricalArticles, type BackfillJobStatus, type MockBackfillJob } from "@/lib/mock-backfill";
 import { appendMockIngestionResult, readMockPreviewState, saveMockBackfillJobs } from "@/lib/mock-preview-store";
+import { canUseMockPreview, mockPreviewDisabledReason } from "@/lib/runtime-mode";
 import { prisma } from "@/lib/prisma";
 import type { MockReviewArticle } from "@/lib/mock-review";
 
@@ -22,7 +23,7 @@ export type BackfillJobRecord = {
   year: number;
   month: number;
   keywords: string | null;
-  status: string;
+  status: BackfillJobStatus;
   articlesFound: number;
   articlesSaved: number;
   duplicatesSkipped: number;
@@ -114,6 +115,8 @@ function backfillPriorityScore(status: string) {
   if (status === "failed") return 3;
   return 4;
 }
+
+type BackfillJobDraft = Omit<MockBackfillJob, "id" | "createdAt" | "updatedAt" | "completedAt">;
 
 function compareBackfillPriority(
   a: Pick<BackfillJobRecord, "status" | "year" | "month" | "createdAt">,
@@ -207,12 +210,12 @@ export async function createBackfillJobs(input: BackfillJobInput): Promise<{ cou
     return { count: 0, dataSource: "database" };
   }
 
-  const jobs = monthRange(input.startMonth, input.endMonth).map(({ year, month }) => ({
+  const jobs: BackfillJobDraft[] = monthRange(input.startMonth, input.endMonth).map(({ year, month }) => ({
     source,
     year,
     month,
     keywords: combineKeywords(input),
-    status: "queued",
+    status: "queued" as BackfillJobStatus,
     articlesFound: 0,
     articlesSaved: 0,
     duplicatesSkipped: 0,
@@ -500,7 +503,7 @@ async function runNextMockBackfillJob(): Promise<RunNextBackfillSummary> {
     });
   }
 
-  const status: MockBackfillJob["status"] = "completed";
+  const status: BackfillJobStatus = "completed";
   const now = new Date();
   await appendMockIngestionResult({
     articles,
@@ -560,6 +563,16 @@ export async function runNextBackfillJob(mode: BackfillMode = "auto"): Promise<R
   try {
     return await runNextDatabaseBackfillJob();
   } catch {
+    if (!canUseMockPreview()) {
+      return {
+        dataSource: "database",
+        status: "failed",
+        articlesFound: 0,
+        articlesSaved: 0,
+        duplicatesSkipped: 0,
+        message: mockPreviewDisabledReason() ?? "Mock preview is disabled in production."
+      };
+    }
     return runNextMockBackfillJob();
   }
 }
@@ -586,6 +599,22 @@ export async function getBackfillDashboardData(): Promise<BackfillDashboardData>
       }
     };
   } catch (error) {
+    if (!canUseMockPreview()) {
+      return {
+        dataSource: "database",
+        jobs: [],
+        logs: [],
+        statusPanel: {
+          queuedJobs: 0,
+          completedJobs: 0,
+          failedJobs: 0,
+          articlesSaved: 0,
+          estimatedRemainingJobs: 0
+        },
+        errorMessage: mockPreviewDisabledReason() ?? (error instanceof Error ? error.message : "Unknown backfill queue error.")
+      };
+    }
+
     const previewState = await readMockPreviewState();
     const jobs = [...previewState.backfillJobs].sort(compareBackfillPriority);
     const logs = previewState.ingestionRuns.filter((run) => run.sourceType === "backfill");

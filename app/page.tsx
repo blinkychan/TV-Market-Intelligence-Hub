@@ -7,6 +7,7 @@ import { mockCurrentShows } from "@/lib/mock-current-tv";
 import { mockRelationshipIndex } from "@/lib/mock-relationships";
 import { mockReviewArticles } from "@/lib/mock-review";
 import { prisma } from "@/lib/prisma";
+import { canUseMockPreview, mockPreviewDisabledReason } from "@/lib/runtime-mode";
 
 export const dynamic = "force-dynamic";
 
@@ -22,8 +23,22 @@ async function getDashboardCounts() {
       prisma.article.count({ where: { needsReview: true } })
     ]);
 
-    return { totalProjects, activeProjects, currentShows, buyers, companies, people, reviewItems };
-  } catch {
+    return { totalProjects, activeProjects, currentShows, buyers, companies, people, reviewItems, dataSource: "database" as const, errorMessage: null };
+  } catch (error) {
+    if (!canUseMockPreview()) {
+      return {
+        totalProjects: 0,
+        activeProjects: 0,
+        currentShows: 0,
+        buyers: 0,
+        companies: 0,
+        people: 0,
+        reviewItems: 0,
+        dataSource: "database" as const,
+        errorMessage: mockPreviewDisabledReason() ?? (error instanceof Error ? error.message : "Unknown database error.")
+      };
+    }
+
     const mockProjects = mockBuyerDetails.flatMap((buyer) => buyer.projects);
     return {
       totalProjects: mockProjects.length,
@@ -32,13 +47,15 @@ async function getDashboardCounts() {
       buyers: mockBuyerDetails.length,
       companies: mockRelationshipIndex.companies.length,
       people: mockRelationshipIndex.people.length,
-      reviewItems: mockReviewArticles.filter((article) => article.extractionStatus === "Needs Review" || article.extractionStatus === "New").length
+      reviewItems: mockReviewArticles.filter((article) => article.extractionStatus === "Needs Review" || article.extractionStatus === "New").length,
+      dataSource: "mock" as const,
+      errorMessage: error instanceof Error ? error.message : "Unknown database error."
     };
   }
 }
 
 export default async function DashboardPage() {
-  const { totalProjects, activeProjects, currentShows, buyers, companies, people, reviewItems } = await getDashboardCounts();
+  const { totalProjects, activeProjects, currentShows, buyers, companies, people, reviewItems, dataSource, errorMessage } = await getDashboardCounts();
 
   const dashboardCards = [
     {
@@ -115,6 +132,11 @@ export default async function DashboardPage() {
             Open Tracker <ArrowUpRight className="h-4 w-4" />
           </ButtonLink>
         </div>
+        {errorMessage ? (
+          <div className={`mt-4 rounded-md px-3 py-2 text-sm ${dataSource === "mock" ? "border border-amber-200 bg-amber-50 text-amber-900" : "border border-rose-200 bg-rose-50 text-rose-900"}`}>
+            {dataSource === "mock" ? `Preview data is active because the dashboard database could not be read: ${errorMessage}` : errorMessage}
+          </div>
+        ) : null}
       </section>
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">

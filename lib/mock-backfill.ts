@@ -1,3 +1,5 @@
+export type BackfillJobStatus = "queued" | "running" | "completed" | "failed" | "paused";
+
 export type BackfillKeywordSet = {
   id: string;
   label: string;
@@ -10,7 +12,7 @@ export type MockBackfillJob = {
   year: number;
   month: number;
   keywords: string | null;
-  status: "queued" | "running" | "completed" | "failed" | "paused";
+  status: BackfillJobStatus;
   articlesFound: number;
   articlesSaved: number;
   duplicatesSkipped: number;
@@ -50,7 +52,7 @@ export const mockBackfillJobs: MockBackfillJob[] = [
     year: 2024,
     month: 5,
     keywords: "script sale; series order; drama",
-    status: "queued",
+    status: "queued" as BackfillJobStatus,
     articlesFound: 0,
     articlesSaved: 0,
     duplicatesSkipped: 0,
@@ -65,7 +67,7 @@ export const mockBackfillJobs: MockBackfillJob[] = [
     year: 2023,
     month: 11,
     keywords: "pilot order; broadcast; family drama",
-    status: "queued",
+    status: "queued" as BackfillJobStatus,
     articlesFound: 0,
     articlesSaved: 0,
     duplicatesSkipped: 0,
@@ -80,7 +82,7 @@ export const mockBackfillJobs: MockBackfillJob[] = [
     year: 2025,
     month: 2,
     keywords: "international co-production; thriller",
-    status: "completed",
+    status: "completed" as BackfillJobStatus,
     articlesFound: 2,
     articlesSaved: 2,
     duplicatesSkipped: 0,

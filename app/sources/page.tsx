@@ -1,14 +1,16 @@
 import Link from "next/link";
-import { Activity, Database, FileText, Plus, Radio, Upload } from "lucide-react";
+import { Activity, FileText, Plus, Radio, Upload } from "lucide-react";
 import { addManualArticle, runMockRssIngestion, runRssIngestion, saveRssFeed } from "./actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Table, Td, Th } from "@/components/ui/table";
+import { isAdminSessionValid } from "@/lib/admin-auth";
 import { readMockPreviewState } from "@/lib/mock-preview-store";
 import { mockFeeds, mockIngestionRuns } from "@/lib/mock-sources";
 import { prisma } from "@/lib/prisma";
+import { canUseMockPreview, mockPreviewDisabledReason } from "@/lib/runtime-mode";
 import { formatDate, humanize } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -36,9 +38,11 @@ type RunRecord = {
 };
 
 export default async function SourcesPage() {
+  const adminUnlocked = await isAdminSessionValid();
   let dataSource: "database" | "mock" = "database";
   let feeds: FeedRecord[] = [];
   let history: RunRecord[] = [];
+  let errorMessage: string | null = null;
 
   try {
     const [dbFeeds, dbHistory] = await Promise.all([
@@ -48,16 +52,21 @@ export default async function SourcesPage() {
 
     feeds = dbFeeds;
     history = dbHistory;
-  } catch {
-    dataSource = "mock";
-    feeds = mockFeeds;
-    history = (await readMockPreviewState().catch(() => null))?.ingestionRuns ?? mockIngestionRuns;
+  } catch (error) {
+    errorMessage = error instanceof Error ? error.message : "Unknown database error.";
+    if (canUseMockPreview()) {
+      dataSource = "mock";
+      feeds = mockFeeds;
+      history = (await readMockPreviewState().catch(() => null))?.ingestionRuns ?? mockIngestionRuns;
+    }
   }
 
   const totalFeeds = feeds.length;
   const enabledFeeds = feeds.filter((feed) => feed.enabled).length;
   const networkPressFeeds = feeds.filter((feed) => feed.category.toLowerCase().includes("press")).length;
   const latestRssRun = history.find((run) => run.sourceType === "rss" || run.sourceType === "rss_mock" || run.sourceType === "rss_placeholder");
+  const databaseWritable = dataSource === "database" && !errorMessage;
+  const canRunMock = adminUnlocked && canUseMockPreview();
 
   return (
     <div className="space-y-6">
@@ -74,6 +83,16 @@ export default async function SourcesPage() {
             Data Source: {dataSource === "database" ? "Database" : "Mock Preview Data"}
           </Badge>
         </div>
+        {errorMessage ? (
+          <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            {dataSource === "mock" ? `Preview data is active because the source registry could not be read: ${errorMessage}` : mockPreviewDisabledReason() ?? errorMessage}
+          </div>
+        ) : null}
+        {!adminUnlocked ? (
+          <div className="mt-4 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900">
+            Ingestion controls are locked until you unlock admin access on <Link href="/admin/login?next=%2Fsources" className="font-medium underline">the admin login page</Link>.
+          </div>
+        ) : null}
       </section>
 
       <section className="grid gap-4 md:grid-cols-3">
@@ -115,12 +134,12 @@ export default async function SourcesPage() {
             </div>
             <div className="flex flex-wrap gap-2">
               <form action={runRssIngestion}>
-                <Button type="submit" variant="secondary" disabled={dataSource === "mock"}>
+                <Button type="submit" variant="secondary" disabled={!databaseWritable || !adminUnlocked}>
                   <Radio className="h-4 w-4" /> Run RSS Ingestion
                 </Button>
               </form>
               <form action={runMockRssIngestion}>
-                <Button type="submit">
+                <Button type="submit" disabled={!canRunMock}>
                   <Activity className="h-4 w-4" /> Run Mock Ingestion
                 </Button>
               </form>
@@ -165,17 +184,17 @@ export default async function SourcesPage() {
                       return (
                         <tr key={feed.id}>
                           <Td className="min-w-44">
-                            <Input form={formId} name="publicationName" defaultValue={feed.publicationName} disabled={dataSource === "mock"} />
+                            <Input form={formId} name="publicationName" defaultValue={feed.publicationName} disabled={!databaseWritable || !adminUnlocked} />
                           </Td>
                           <Td className="min-w-80">
-                            <Input form={formId} name="feedUrl" defaultValue={feed.feedUrl} disabled={dataSource === "mock"} />
+                            <Input form={formId} name="feedUrl" defaultValue={feed.feedUrl} disabled={!databaseWritable || !adminUnlocked} />
                           </Td>
                           <Td className="min-w-40">
-                            <Input form={formId} name="category" defaultValue={feed.category} disabled={dataSource === "mock"} />
+                            <Input form={formId} name="category" defaultValue={feed.category} disabled={!databaseWritable || !adminUnlocked} />
                           </Td>
                           <Td>
                             <label className="inline-flex items-center gap-2 text-sm">
-                              <input form={formId} type="checkbox" name="enabled" defaultChecked={feed.enabled} disabled={dataSource === "mock"} />
+                              <input form={formId} type="checkbox" name="enabled" defaultChecked={feed.enabled} disabled={!databaseWritable || !adminUnlocked} />
                               <span>{feed.enabled ? "On" : "Off"}</span>
                             </label>
                           </Td>
@@ -183,7 +202,7 @@ export default async function SourcesPage() {
                           <Td>
                             <form id={formId} action={saveRssFeed}>
                               <input type="hidden" name="id" value={feed.id} />
-                              <Button type="submit" variant="ghost" className="w-full" disabled={dataSource === "mock"}>
+                              <Button type="submit" variant="ghost" className="w-full" disabled={!databaseWritable || !adminUnlocked}>
                                 Save
                               </Button>
                             </form>
@@ -201,10 +220,10 @@ export default async function SourcesPage() {
             )}
 
             <form action={saveRssFeed} className="grid gap-3 rounded-lg border bg-slate-50 p-4 md:grid-cols-[1fr_1.4fr_0.7fr_auto]">
-              <Input name="publicationName" placeholder="Publication name" disabled={dataSource === "mock"} />
-              <Input name="feedUrl" placeholder="https://example.com/feed.xml" disabled={dataSource === "mock"} />
-              <Input name="category" placeholder="Category" disabled={dataSource === "mock"} />
-              <Button type="submit" disabled={dataSource === "mock"}>
+              <Input name="publicationName" placeholder="Publication name" disabled={!databaseWritable || !adminUnlocked} />
+              <Input name="feedUrl" placeholder="https://example.com/feed.xml" disabled={!databaseWritable || !adminUnlocked} />
+              <Input name="category" placeholder="Category" disabled={!databaseWritable || !adminUnlocked} />
+              <Button type="submit" disabled={!databaseWritable || !adminUnlocked}>
                 <Plus className="h-4 w-4" /> Add Feed
               </Button>
             </form>
@@ -225,15 +244,16 @@ export default async function SourcesPage() {
             </CardHeader>
             <CardContent>
               <form action={addManualArticle} className="space-y-3">
-                <Input name="url" type="url" placeholder="https://publication.example/story" />
-                <Input name="publication" placeholder="Publication (optional)" />
+                <Input name="url" type="url" placeholder="https://publication.example/story" disabled={!databaseWritable || !adminUnlocked} />
+                <Input name="publication" placeholder="Publication (optional)" disabled={!databaseWritable || !adminUnlocked} />
                 <textarea
                   name="notes"
                   rows={4}
                   placeholder="Quick note for the review queue"
+                  disabled={!databaseWritable || !adminUnlocked}
                   className="w-full rounded-md border bg-background px-3 py-2 text-sm"
                 />
-                <Button type="submit" className="w-full">
+                <Button type="submit" className="w-full" disabled={!databaseWritable || !adminUnlocked}>
                   <FileText className="h-4 w-4" /> Add to Review Queue
                 </Button>
               </form>

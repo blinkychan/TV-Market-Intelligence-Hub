@@ -2,9 +2,12 @@
 
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "node:crypto";
+import { requireAdminActionAccess } from "@/lib/admin-auth";
 import { appendMockIngestionResult } from "@/lib/mock-preview-store";
+import { logOperationalEvent } from "@/lib/ops-log";
 import { prisma } from "@/lib/prisma";
 import { ingestRSSFeeds } from "@/lib/rss-ingestion";
+import { inferSourceReliability } from "@/lib/source-reliability";
 
 function safeHost(urlValue: string) {
   try {
@@ -15,6 +18,7 @@ function safeHost(urlValue: string) {
 }
 
 export async function saveRssFeed(formData: FormData) {
+  await requireAdminActionAccess();
   const id = String(formData.get("id") ?? "");
   const publicationName = String(formData.get("publicationName") ?? "").trim();
   const feedUrl = String(formData.get("feedUrl") ?? "").trim();
@@ -40,9 +44,11 @@ export async function saveRssFeed(formData: FormData) {
   }).catch(() => {});
 
   revalidatePath("/sources");
+  revalidatePath("/admin/status");
 }
 
 export async function addManualArticle(formData: FormData) {
+  await requireAdminActionAccess();
   const url = String(formData.get("url") ?? "").trim();
   const publication = String(formData.get("publication") ?? "").trim() || safeHost(url);
   const notes = String(formData.get("notes") ?? "").trim();
@@ -54,6 +60,10 @@ export async function addManualArticle(formData: FormData) {
       update: {
         publication,
         summary: notes || "Manual URL submitted from Sources / Ingestion Settings.",
+        extractedExcerpt: notes ? notes.slice(0, 280) : null,
+        bodyFetchStatus: "not_fetched",
+        paywallLikely: false,
+        sourceReliability: inferSourceReliability(publication, url),
         sourceType: "manual_url",
         ingestionSource: "Manual",
         needsReview: true,
@@ -64,6 +74,10 @@ export async function addManualArticle(formData: FormData) {
         publication,
         headline: `Manual review: ${safeHost(url)}`,
         summary: notes || "Manual URL submitted from Sources / Ingestion Settings.",
+        extractedExcerpt: notes ? notes.slice(0, 280) : null,
+        bodyFetchStatus: "not_fetched",
+        paywallLikely: false,
+        sourceReliability: inferSourceReliability(publication, url),
         sourceType: "manual_url",
         ingestionSource: "Manual",
         needsReview: true,
@@ -93,6 +107,13 @@ export async function addManualArticle(formData: FormData) {
           publishedDate: new Date(),
           url,
           sourceType: "manual_url",
+          extractedExcerpt: notes ? notes.slice(0, 280) : null,
+          bodyFetchStatus: "not_fetched",
+          bodyFetchError: null,
+          bodyFetchedAt: null,
+          robotsAllowed: null,
+          paywallLikely: false,
+          sourceReliability: inferSourceReliability(publication, url),
           extractionStatus: "New",
           suspectedCategory: "Manual Review",
           confidenceScore: null,
@@ -131,12 +152,18 @@ export async function addManualArticle(formData: FormData) {
 
   revalidatePath("/sources");
   revalidatePath("/review");
+  revalidatePath("/admin/status");
 }
 
 export async function runRssIngestion() {
+  await requireAdminActionAccess();
   try {
     await ingestRSSFeeds("real");
   } catch (error) {
+    logOperationalEvent("error", "RSS ingestion failed.", {
+      sourceType: "rss",
+      message: error instanceof Error ? error.message : "Unknown RSS ingestion error"
+    });
     await prisma.ingestionRun.create({
       data: {
         sourceType: "rss",
@@ -152,12 +179,18 @@ export async function runRssIngestion() {
   }
   revalidatePath("/sources");
   revalidatePath("/review");
+  revalidatePath("/admin/status");
 }
 
 export async function runMockRssIngestion() {
+  await requireAdminActionAccess();
   try {
     await ingestRSSFeeds("mock");
   } catch (error) {
+    logOperationalEvent("warn", "Mock RSS ingestion failed.", {
+      sourceType: "rss_mock",
+      message: error instanceof Error ? error.message : "Unknown mock RSS ingestion error"
+    });
     await appendMockIngestionResult({
       articles: [],
       run: {
@@ -175,9 +208,11 @@ export async function runMockRssIngestion() {
   }
   revalidatePath("/sources");
   revalidatePath("/review");
+  revalidatePath("/admin/status");
 }
 
 export async function saveBackfillRequest(formData: FormData) {
+  await requireAdminActionAccess();
   const source = String(formData.get("source") ?? "").trim();
   const month = String(formData.get("month") ?? "").trim();
   const year = String(formData.get("year") ?? "").trim();
@@ -199,4 +234,5 @@ export async function saveBackfillRequest(formData: FormData) {
   }).catch(() => {});
 
   revalidatePath("/sources");
+  revalidatePath("/admin/status");
 }

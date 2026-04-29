@@ -49,6 +49,7 @@ Copy the Prisma connection strings and paste them into `.env.local`:
 DATABASE_URL=
 DIRECT_URL=
 NEXT_PUBLIC_APP_URL=http://localhost:3000
+ADMIN_PASSWORD=
 ```
 
 Replace `[YOUR-PASSWORD]` in the copied Supabase URLs.
@@ -119,3 +120,91 @@ Seed data includes:
 3. Replace `[YOUR-PASSWORD]`.
 4. Run `npx prisma db push`.
 5. Run `npx prisma db seed` if seed data is desired.
+
+## Vercel Deployment
+
+Required environment variables in Vercel:
+
+```env
+DATABASE_URL=
+DIRECT_URL=
+ADMIN_PASSWORD=
+NEXT_PUBLIC_APP_URL=
+```
+
+Setup steps:
+
+1. In Supabase, open `Connect` -> `ORM / Third Party Library` -> `Prisma`.
+2. Copy the pooled Prisma connection string into `DATABASE_URL`.
+3. Copy the direct Prisma connection string into `DIRECT_URL`.
+4. Replace `[YOUR-PASSWORD]` in both values.
+5. Add a shared `ADMIN_PASSWORD` for protected ingestion and admin controls.
+6. Set `NEXT_PUBLIC_APP_URL` to your Vercel production URL.
+7. Redeploy the project from the Vercel dashboard after saving environment variables.
+
+### Redeploy
+
+- In Vercel, open the project and use `Deployments` -> `Redeploy`.
+- For local verification before redeploying:
+
+```bash
+npm run build
+```
+
+### Check Logs
+
+- Vercel: project -> `Logs`
+- Supabase: project -> `Logs`
+- In-app: open `/admin/status` to confirm the latest RSS, backfill, and body extraction runs
+
+### Confirm Supabase Tables Are Connected
+
+1. Run:
+
+```bash
+npx prisma db push
+```
+
+2. Optional seed:
+
+```bash
+npx prisma db seed
+```
+
+3. Open Prisma Studio:
+
+```bash
+npx prisma studio
+```
+
+4. In the hosted app, visit `/admin/status` and verify:
+   - Database shows `Connected`
+   - counts are non-zero after seeding
+   - review queue and ingestion panels load without mock fallback messaging
+
+## Shared Admin Password
+
+The current hosted-access protection is a shared admin password, not full user auth yet.
+
+Protected today:
+
+- `/admin/status`
+- RSS ingestion controls
+- backfill queue controls
+- article body fetch controls
+- review queue write actions
+- record-creation and linking actions from the review queue
+
+Use `/admin/login` to unlock an admin session in the browser.
+
+## Production QA Checklist
+
+- Build passes
+- Database connects
+- Seed data is visible
+- Review queue works
+- Report generation works
+- RSS ingestion creates `Article` records
+- Body extraction works when robots rules allow it
+- Backfill queue creates jobs
+- No mock data appears in production unless explicitly enabled

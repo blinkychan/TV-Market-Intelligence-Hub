@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Select } from "@/components/ui/input";
 import { Table, Td, Th } from "@/components/ui/table";
+import { isAdminSessionValid } from "@/lib/admin-auth";
 import { BACKFILL_KEYWORD_SETS, mockBackfillJobs } from "@/lib/mock-backfill";
 import { mockFeeds } from "@/lib/mock-sources";
 import { formatJobMonth, getBackfillDashboardData } from "@/lib/backfill";
@@ -22,7 +23,9 @@ function statusTone(status: string) {
 }
 
 export default async function BackfillQueuePage() {
+  const adminUnlocked = await isAdminSessionValid();
   const { jobs, logs, dataSource, statusPanel, errorMessage } = await getBackfillDashboardData();
+  const backfillWritable = dataSource === "database" ? !errorMessage : true;
   const sources = Array.from(new Set([...mockFeeds.map((feed) => feed.publicationName), ...mockBackfillJobs.map((job) => job.source), ...jobs.map((job) => job.source)])).sort();
 
   return (
@@ -50,7 +53,16 @@ export default async function BackfillQueuePage() {
         </div>
         {errorMessage ? (
           <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-            Preview data is active because the backfill queue could not be read: {errorMessage}
+            {dataSource === "mock" ? `Preview data is active because the backfill queue could not be read: ${errorMessage}` : errorMessage}
+          </div>
+        ) : null}
+        {!adminUnlocked ? (
+          <div className="mt-4 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900">
+            Backfill controls are locked until you unlock admin access on{" "}
+            <Link href="/admin/login?next=%2Fsources%2Fbackfill" className="font-medium underline">
+              the admin login page
+            </Link>
+            .
           </div>
         ) : null}
       </section>
@@ -106,7 +118,7 @@ export default async function BackfillQueuePage() {
               <Input name="keywords" placeholder="Optional extra keywords" />
               <div className="md:col-span-2 flex items-center justify-between gap-3">
                 <p className="text-sm text-muted-foreground">Keyword sets are only search hints. Articles still land in review before anything becomes a project or show.</p>
-                <Button type="submit">
+                <Button type="submit" disabled={!adminUnlocked || !backfillWritable}>
                   <Search className="h-4 w-4" /> Queue Jobs
                 </Button>
               </div>
@@ -130,7 +142,7 @@ export default async function BackfillQueuePage() {
               <p className="text-sm text-muted-foreground">Runs one queued job at a time so the queue stays slow, safe, and reviewable.</p>
             </div>
             <form action={runNextBackfillJobAction}>
-              <Button type="submit">
+              <Button type="submit" disabled={!adminUnlocked || !backfillWritable}>
                 <Play className="h-4 w-4" /> Run Next
               </Button>
             </form>
@@ -140,7 +152,7 @@ export default async function BackfillQueuePage() {
               Daily automation should call <code>/api/cron/backfill-next</code>. That endpoint uses the same one-job runner as this button and never auto-creates Project records.
             </div>
             <div className="rounded-lg border bg-slate-50 p-4 text-sm text-muted-foreground">
-              Article body fetch stays off unless a future Step 12 body extractor exists and robots rules allow it. For now, backfill stores metadata and links only.
+              Article body fetch stays optional and only runs when robots rules allow it. Backfill still routes every new item into human review before anything becomes a tracked record.
             </div>
           </CardContent>
         </Card>

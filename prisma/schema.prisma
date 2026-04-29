@@ -181,6 +181,16 @@ model Article {
   publishedDate         DateTime?
   summary               String?
   rawText               String?
+  rawHtml               String?
+  extractedText         String?
+  extractedExcerpt      String?
+  extractionMethod      String?
+  bodyFetchStatus       String?
+  bodyFetchError        String?
+  bodyFetchedAt         DateTime?
+  robotsAllowed         Boolean?
+  paywallLikely         Boolean       @default(false)
+  sourceReliability     String?
   sourceType            String?
   ingestionSource       String?
   needsReview           Boolean      @default(true)
@@ -213,6 +223,8 @@ model Article {
   @@index([publishedDate])
   @@index([needsReview])
   @@index([ingestionSource])
+  @@index([bodyFetchStatus])
+  @@index([sourceReliability])
   @@index([extractionStatus])
   @@index([extractionMode])
   @@index([suspectedCategory])

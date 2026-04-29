@@ -8,6 +8,9 @@ import {
   createProjectFromArticle,
   createRelationships,
   extractArticleData,
+  fetchArticleBodyAction,
+  fetchBodiesForNeedsReview,
+  fetchSelectedBodiesAction,
   linkArticleToProject,
   linkArticleToShow,
   saveExtractedFields,
@@ -18,10 +21,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Select } from "@/components/ui/input";
 import { Table, Td, Th } from "@/components/ui/table";
+import { isAdminSessionValid } from "@/lib/admin-auth";
 import { mockCurrentShows } from "@/lib/mock-current-tv";
 import { readMockPreviewState } from "@/lib/mock-preview-store";
 import { mockReviewArticles } from "@/lib/mock-review";
 import { prisma } from "@/lib/prisma";
+import { canUseMockPreview, mockPreviewDisabledReason } from "@/lib/runtime-mode";
+import { sourceReliabilityTone } from "@/lib/source-reliability";
 import { cn, formatDate, humanize } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -35,6 +41,16 @@ type ReviewArticle = {
   publishedDate: Date | null;
   url: string;
   sourceType: string | null;
+  rawHtml?: string | null;
+  extractedText?: string | null;
+  extractedExcerpt?: string | null;
+  extractionMethod?: string | null;
+  bodyFetchStatus?: string | null;
+  bodyFetchError?: string | null;
+  bodyFetchedAt?: Date | null;
+  robotsAllowed?: boolean | null;
+  paywallLikely?: boolean | null;
+  sourceReliability?: string | null;
   extractionStatus: string;
   extractionMode?: string | null;
   suspectedCategory: string | null;
@@ -83,6 +99,14 @@ function percentConfidence(value?: number | null) {
   return `${Math.round(value * 100)}%`;
 }
 
+function bodyFetchTone(status?: string | null) {
+  if (status === "success") return "bg-emerald-50 text-emerald-700 ring-emerald-200";
+  if (status === "robots_blocked") return "bg-amber-50 text-amber-800 ring-amber-200";
+  if (status === "paywall_likely") return "bg-violet-50 text-violet-700 ring-violet-200";
+  if (status === "timeout" || status === "fetch_error" || status === "extraction_error") return "bg-rose-50 text-rose-700 ring-rose-200";
+  return "bg-slate-100 text-slate-700 ring-slate-200";
+}
+
 async function getReviewData() {
   const mockProjectOptions = Array.from(
     new Map(
@@ -113,7 +137,7 @@ async function getReviewData() {
       prisma.currentShow.findMany({ select: { id: true, title: true }, orderBy: { title: "asc" } })
     ]);
 
-    if (!articles.length) {
+    if (!articles.length && canUseMockPreview()) {
       const previewState = await readMockPreviewState().catch(() => null);
       return {
         dataSource: "mock" as const,
@@ -121,6 +145,16 @@ async function getReviewData() {
         projects: mockProjectOptions,
         currentShows: mockShowOptions,
         errorMessage: "SQLite returned no Article rows."
+      };
+    }
+
+    if (!articles.length) {
+      return {
+        dataSource: "database" as const,
+        articles: [] as ReviewArticle[],
+        projects,
+        currentShows,
+        errorMessage: "No Article rows exist yet. Seed starter data or run ingestion to populate the review queue."
       };
     }
 
@@ -135,6 +169,16 @@ async function getReviewData() {
         publishedDate: article.publishedDate,
         url: article.url,
         sourceType: article.sourceType,
+        rawHtml: article.rawHtml,
+        extractedText: article.extractedText,
+        extractedExcerpt: article.extractedExcerpt,
+        extractionMethod: article.extractionMethod,
+        bodyFetchStatus: article.bodyFetchStatus,
+        bodyFetchError: article.bodyFetchError,
+        bodyFetchedAt: article.bodyFetchedAt,
+        robotsAllowed: article.robotsAllowed,
+        paywallLikely: article.paywallLikely,
+        sourceReliability: article.sourceReliability,
         extractionStatus: article.extractionStatus,
         extractionMode: article.extractionMode,
         suspectedCategory: article.suspectedCategory,
@@ -162,6 +206,16 @@ async function getReviewData() {
       errorMessage: undefined
     };
   } catch (error) {
+    if (!canUseMockPreview()) {
+      return {
+        dataSource: "database" as const,
+        articles: [] as ReviewArticle[],
+        projects: [] as Array<{ id: string; title: string }>,
+        currentShows: [] as Array<{ id: string; title: string }>,
+        errorMessage: mockPreviewDisabledReason() ?? (error instanceof Error ? error.message : "Unknown database error.")
+      };
+    }
+
     const previewState = await readMockPreviewState().catch(() => null);
     return {
       dataSource: "mock" as const,
@@ -178,6 +232,7 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
   const query = (params.q ?? "").trim().toLowerCase();
   const statusFilter = params.status ?? "All";
   const { articles, dataSource, projects, currentShows, errorMessage } = await getReviewData();
+  const adminUnlocked = await isAdminSessionValid();
 
   const filteredArticles = articles.filter((article) => {
     const matchesStatus = statusFilter === "All" || article.extractionStatus === statusFilter;
@@ -223,7 +278,16 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
         </div>
         {errorMessage ? (
           <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-            Preview data is active because the database queue could not be read: {errorMessage}
+            {dataSource === "mock" ? `Preview data is active because the database queue could not be read: ${errorMessage}` : errorMessage}
+          </div>
+        ) : null}
+        {!adminUnlocked ? (
+          <div className="mt-4 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900">
+            Review edits and ingestion actions are locked until you unlock admin controls on{" "}
+            <Link href="/admin/login?next=%2Freview" className="font-medium underline">
+              the admin login page
+            </Link>
+            .
           </div>
         ) : null}
       </section>
@@ -260,6 +324,16 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
             <Button type="submit">Apply Filters</Button>
           </form>
           <div className="flex flex-wrap gap-2">
+            <form action={fetchBodiesForNeedsReview}>
+              <Button type="submit" variant="secondary" disabled={!adminUnlocked}>
+                <FileText className="h-4 w-4" /> Fetch Bodies for Needs Review
+              </Button>
+            </form>
+            <Button type="submit" form="review-bulk-body-fetch" variant="secondary" disabled={!adminUnlocked || !filteredArticles.length}>
+              <FileText className="h-4 w-4" /> Fetch Bodies for Checked Rows
+            </Button>
+          </div>
+          <div className="flex flex-wrap gap-2">
             {statusOptions.map((status) => {
               const href = status === "All"
                 ? `/review${params.q ? `?q=${encodeURIComponent(params.q)}` : ""}`
@@ -289,14 +363,19 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
           <CardContent>
             {filteredArticles.length ? (
               <div className="overflow-x-auto rounded-lg border">
+                <form id="review-bulk-body-fetch" action={fetchSelectedBodiesAction} />
                 <Table>
                   <thead className="bg-slate-50">
                     <tr>
+                      <Th className="w-10">
+                        <span className="sr-only">Select</span>
+                      </Th>
                       <Th>Headline</Th>
                       <Th>Status</Th>
                       <Th>Publication</Th>
                       <Th>Published</Th>
-                      <Th>Source URL</Th>
+                      <Th>Excerpt</Th>
+                      <Th>Body Fetch</Th>
                       <Th>Category</Th>
                       <Th>Linked Record</Th>
                       <Th>Confidence</Th>
@@ -308,6 +387,9 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
                       return (
                         <tr key={article.id} className={cn(selectedArticle?.id === article.id && "bg-slate-50")}>
                           <Td>
+                            <input type="checkbox" name="articleIds" value={article.id} form="review-bulk-body-fetch" />
+                          </Td>
+                          <Td>
                             <Link href={rowHref} className="font-medium text-slate-900 hover:text-primary">
                               {article.headline}
                             </Link>
@@ -318,9 +400,17 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
                           <Td>{article.publication ?? "Unknown"}</Td>
                           <Td>{formatDate(article.publishedDate)}</Td>
                           <Td>
-                            <a href={article.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-primary hover:underline">
-                              Source <ExternalLink className="h-3.5 w-3.5" />
-                            </a>
+                            <div className="max-w-xs text-sm text-muted-foreground">
+                              {article.extractedExcerpt ?? article.summary ?? "No body excerpt yet."}
+                            </div>
+                          </Td>
+                          <Td>
+                            <div className="space-y-1">
+                              <Badge className={bodyFetchTone(article.bodyFetchStatus)}>{humanize(article.bodyFetchStatus ?? "not_fetched")}</Badge>
+                              <div className="text-xs text-muted-foreground">
+                                Robots: {article.robotsAllowed == null ? "?" : article.robotsAllowed ? "Y" : "N"} · Paywall: {article.paywallLikely ? "Y" : "N"}
+                              </div>
+                            </div>
                           </Td>
                           <Td>{article.suspectedCategory ?? "Unclassified"}</Td>
                           <Td>{article.linkedProjectTitle ?? article.linkedShowTitle ?? "Unlinked"}</Td>
@@ -361,6 +451,8 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
                     <Badge className={extractionTone(selectedArticle.extractionStatus)}>{selectedArticle.extractionStatus}</Badge>
                     <Badge className="bg-slate-100 text-slate-700 ring-slate-200">{selectedArticle.suspectedCategory ?? "Unclassified"}</Badge>
                     <Badge className="bg-slate-100 text-slate-700 ring-slate-200">Confidence {percentConfidence(selectedArticle.confidenceScore)}</Badge>
+                    <Badge className={bodyFetchTone(selectedArticle.bodyFetchStatus)}>{humanize(selectedArticle.bodyFetchStatus ?? "not_fetched")}</Badge>
+                    <Badge className={sourceReliabilityTone(selectedArticle.sourceReliability)}>{humanize(selectedArticle.sourceReliability ?? "low")} reliability</Badge>
                     {selectedArticle.extractionMode ? (
                       <Badge className="bg-slate-100 text-slate-700 ring-slate-200">Extraction {humanize(selectedArticle.extractionMode)}</Badge>
                     ) : null}
@@ -378,17 +470,40 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
                   <div className="rounded-lg border bg-slate-50 p-4">
                     <div className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Article Summary</div>
                     <p className="mt-2 text-sm leading-6 text-slate-700">{selectedArticle.summary ?? "No summary yet."}</p>
+                    <p className="mt-3 text-sm leading-6 text-slate-700">{selectedArticle.extractedExcerpt ?? "No extracted excerpt yet."}</p>
                   </div>
                   <div className="rounded-lg border bg-slate-50 p-4">
-                    <div className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Linked Record</div>
+                    <div className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Body Fetch & Link Status</div>
                     <p className="mt-2 text-sm leading-6 text-slate-700">
                       {selectedArticle.linkedProjectTitle ?? selectedArticle.linkedShowTitle ?? "No project or current show linked yet."}
                     </p>
+                    <p className="mt-3 text-sm leading-6 text-slate-700">
+                      Robots allowed: {selectedArticle.robotsAllowed == null ? "Unknown" : selectedArticle.robotsAllowed ? "Yes" : "No"} · Paywall likely:{" "}
+                      {selectedArticle.paywallLikely ? "Yes" : "No"}
+                    </p>
+                    {selectedArticle.bodyFetchError ? (
+                      <p className="mt-3 text-sm leading-6 text-rose-700">{selectedArticle.bodyFetchError}</p>
+                    ) : null}
                     {selectedArticle.extractedDeduplicationNotes ? (
                       <p className="mt-3 text-sm leading-6 text-amber-800">{selectedArticle.extractedDeduplicationNotes}</p>
                     ) : null}
                   </div>
                 </div>
+
+                <form action={fetchArticleBodyAction} className="rounded-lg border p-4">
+                  <input type="hidden" name="articleId" value={selectedArticle.id} />
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <div className="text-sm font-medium">Article Body Fetch</div>
+                      <p className="text-sm text-muted-foreground">
+                        Respect robots rules, fetch politely, and store readable text only for internal review and extraction.
+                      </p>
+                    </div>
+                    <Button type="submit" variant="secondary" disabled={!adminUnlocked}>
+                      <FileText className="h-4 w-4" /> Fetch Article Body
+                    </Button>
+                  </div>
+                </form>
 
                 <form action={extractArticleData} className="rounded-lg border p-4">
                   <input type="hidden" name="articleId" value={selectedArticle.id} />
@@ -397,10 +512,10 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
                     <div>
                       <div className="text-sm font-medium">Structured Extraction</div>
                       <p className="text-sm text-muted-foreground">
-                        Run mock extraction in preview mode, or the heuristic placeholder pipeline in database mode.
+                        Extraction prefers article body text first, then excerpt, summary, and only uses headline-only fallback as a last resort.
                       </p>
                     </div>
-                    <Button type="submit">
+                    <Button type="submit" disabled={!adminUnlocked}>
                       <FileSearch className="h-4 w-4" /> Extract Structured Data
                     </Button>
                   </div>
@@ -422,6 +537,10 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
                   <div className="rounded-lg border p-4">
                     <div className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Entities & Relationships</div>
                     <div className="mt-3 space-y-3 text-sm">
+                      <div>
+                        <div className="text-muted-foreground">Stored Body Excerpt</div>
+                        <p className="mt-1 leading-6 text-slate-700">{selectedArticle.extractedExcerpt ?? "No body excerpt stored."}</p>
+                      </div>
                       <div>
                         <div className="text-muted-foreground">Extracted Buyers</div>
                         <div className="mt-1 flex flex-wrap gap-2">
@@ -454,6 +573,11 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
                         <div className="text-muted-foreground">Fields Needing Review</div>
                         <p className="mt-1 leading-6 text-slate-700">{selectedArticle.extractedFieldsNeedingReview ?? "No flagged fields."}</p>
                       </div>
+                      {selectedArticle.extractedFieldsNeedingReview?.toLowerCase().includes("headline-only extraction") ? (
+                        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                          Low confidence: headline-only extraction.
+                        </div>
+                      ) : null}
                     </div>
                   </div>
                 </div>
@@ -467,7 +591,7 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
                     <form key={action.value} action={updateArticleStatus}>
                       <input type="hidden" name="articleId" value={selectedArticle.id} />
                       <input type="hidden" name="extractionStatus" value={action.value} />
-                      <Button type="submit" variant={action.value === "Approve" ? "primary" : "secondary"} className="w-full">
+                      <Button type="submit" variant={action.value === "Approve" ? "primary" : "secondary"} className="w-full" disabled={!adminUnlocked}>
                         <action.icon className="h-4 w-4" /> {action.label}
                       </Button>
                     </form>
@@ -529,7 +653,7 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
                     placeholder="Deduplication notes"
                     className="w-full rounded-md border bg-background px-3 py-2 text-sm"
                   />
-                  <Button type="submit" variant="secondary">
+                  <Button type="submit" variant="secondary" disabled={!adminUnlocked}>
                     <ShieldAlert className="h-4 w-4" /> Edit Extracted Fields
                   </Button>
                 </form>
@@ -539,13 +663,13 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
                   <div className="grid gap-3 sm:grid-cols-2">
                     <form action={createProjectFromArticle}>
                       <input type="hidden" name="articleId" value={selectedArticle.id} />
-                      <Button type="submit" className="w-full">
+                      <Button type="submit" className="w-full" disabled={!adminUnlocked}>
                         <PlusCircle className="h-4 w-4" /> Create Project
                       </Button>
                     </form>
                     <form action={createCurrentShowFromArticle}>
                       <input type="hidden" name="articleId" value={selectedArticle.id} />
-                      <Button type="submit" variant="secondary" className="w-full">
+                      <Button type="submit" variant="secondary" className="w-full" disabled={!adminUnlocked}>
                         <FileText className="h-4 w-4" /> Create Current Show
                       </Button>
                     </form>
@@ -560,7 +684,7 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
                         </option>
                       ))}
                     </Select>
-                    <Button type="submit" variant="ghost" disabled={!projects.length}>
+                    <Button type="submit" variant="ghost" disabled={!projects.length || !adminUnlocked}>
                       <Link2 className="h-4 w-4" /> Link to Existing Project
                     </Button>
                   </form>
@@ -574,32 +698,32 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
                         </option>
                       ))}
                     </Select>
-                    <Button type="submit" variant="ghost" disabled={!currentShows.length}>
+                    <Button type="submit" variant="ghost" disabled={!currentShows.length || !adminUnlocked}>
                       <Link2 className="h-4 w-4" /> Link to Existing Show
                     </Button>
                   </form>
                   <div className="grid gap-3 sm:grid-cols-2">
                     <form action={createOrLinkBuyer}>
                       <input type="hidden" name="articleId" value={selectedArticle.id} />
-                      <Button type="submit" variant="secondary" className="w-full">
+                      <Button type="submit" variant="secondary" className="w-full" disabled={!adminUnlocked}>
                         <PlusCircle className="h-4 w-4" /> Create/Link Buyer
                       </Button>
                     </form>
                     <form action={createOrLinkCompanies}>
                       <input type="hidden" name="articleId" value={selectedArticle.id} />
-                      <Button type="submit" variant="secondary" className="w-full">
+                      <Button type="submit" variant="secondary" className="w-full" disabled={!adminUnlocked}>
                         <PlusCircle className="h-4 w-4" /> Create/Link Companies
                       </Button>
                     </form>
                     <form action={createOrLinkPeople}>
                       <input type="hidden" name="articleId" value={selectedArticle.id} />
-                      <Button type="submit" variant="secondary" className="w-full">
+                      <Button type="submit" variant="secondary" className="w-full" disabled={!adminUnlocked}>
                         <PlusCircle className="h-4 w-4" /> Create/Link People
                       </Button>
                     </form>
                     <form action={createRelationships}>
                       <input type="hidden" name="articleId" value={selectedArticle.id} />
-                      <Button type="submit" variant="secondary" className="w-full">
+                      <Button type="submit" variant="secondary" className="w-full" disabled={!adminUnlocked}>
                         <Link2 className="h-4 w-4" /> Create Relationships
                       </Button>
                     </form>

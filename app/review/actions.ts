@@ -2,9 +2,13 @@
 
 import { revalidatePath } from "next/cache";
 import { BuyerType, CompanyType, PersonRole, ProjectStatus, ProjectType } from "@prisma/client";
+import { requireAdminActionAccess } from "@/lib/admin-auth";
+import { fetchArticleBody } from "@/lib/article-body";
 import { extractStructuredTVData, type StructuredTVExtraction } from "@/lib/extraction";
-import { updateMockReviewArticle } from "@/lib/mock-preview-store";
+import { readMockPreviewState, updateMockReviewArticle } from "@/lib/mock-preview-store";
+import { logOperationalEvent } from "@/lib/ops-log";
 import { prisma } from "@/lib/prisma";
+import { inferSourceReliability } from "@/lib/source-reliability";
 
 function parseDate(value: FormDataEntryValue | null) {
   const stringValue = String(value ?? "").trim();
@@ -17,6 +21,13 @@ function parseCsv(value: FormDataEntryValue | null) {
   return String(value ?? "")
     .split(",")
     .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function parseArticleIds(formData: FormData) {
+  return formData
+    .getAll("articleIds")
+    .map((value) => String(value).trim())
     .filter(Boolean);
 }
 
@@ -112,6 +123,11 @@ function normalizePersonRole(input?: string | null): PersonRole {
 }
 
 function mapArticleData(extraction: StructuredTVExtraction) {
+  const fieldsNeedingReview = [...extraction.fieldsNeedingReview];
+  if (extraction.warning && !fieldsNeedingReview.includes(extraction.warning)) {
+    fieldsNeedingReview.unshift(extraction.warning);
+  }
+
   return {
     extractionMode: extraction.mode,
     suspectedCategory: extraction.category.replaceAll("_", " "),
@@ -128,7 +144,7 @@ function mapArticleData(extraction: StructuredTVExtraction) {
     extractedAnnouncementDate: extraction.announcementDate,
     extractedPremiereDate: extraction.premiereDate,
     extractedRelationships: extraction.suggestedRelationships,
-    extractedFieldsNeedingReview: extraction.fieldsNeedingReview.join(", "),
+    extractedFieldsNeedingReview: fieldsNeedingReview.join(", "),
     extractedDeduplicationNotes: extraction.dedupeReason
   };
 }
@@ -217,9 +233,11 @@ async function createOrFindPeople(names: string[], roleHint?: string | null) {
 async function updateMockArticle(articleId: string, updater: Parameters<typeof updateMockReviewArticle>[1]) {
   await updateMockReviewArticle(articleId, updater);
   revalidatePath("/review");
+  revalidatePath("/admin/status");
 }
 
 export async function updateArticleStatus(formData: FormData) {
+  await requireAdminActionAccess();
   const articleId = String(formData.get("articleId") ?? "");
   const extractionStatus = String(formData.get("extractionStatus") ?? "");
   if (!articleId || !extractionStatus) return;
@@ -247,9 +265,11 @@ export async function updateArticleStatus(formData: FormData) {
   }
 
   revalidatePath("/review");
+  revalidatePath("/admin/status");
 }
 
 export async function extractArticleData(formData: FormData) {
+  await requireAdminActionAccess();
   const articleId = String(formData.get("articleId") ?? "");
   const mode = String(formData.get("mode") ?? "placeholder") as "mock" | "placeholder";
   if (!articleId) return;
@@ -270,6 +290,7 @@ export async function extractArticleData(formData: FormData) {
         ...mapArticleData(extraction),
         extractionStatus: duplicate ? "Duplicate" : "Needs Review",
         needsReview: true,
+        sourceReliability: article.sourceReliability ?? inferSourceReliability(article.publication, article.url),
         extractedDeduplicationNotes:
           extraction.dedupeReason ??
           (duplicate ? `Possible duplicate found for ${"headline" in duplicate ? duplicate.headline ?? extraction.title : duplicate.title}.` : null)
@@ -281,15 +302,133 @@ export async function extractArticleData(formData: FormData) {
       return {
         ...existing,
         ...mapArticleData(extraction),
-        extractionStatus: extraction.dedupeCandidate ? "Duplicate" : "Needs Review"
+        extractionStatus: extraction.dedupeCandidate ? "Duplicate" : "Needs Review",
+        sourceReliability: existing.sourceReliability ?? inferSourceReliability(existing.publication, existing.url)
       };
     });
   }
 
   revalidatePath("/review");
+  revalidatePath("/admin/status");
+}
+
+async function persistBodyFetch(articleId: string) {
+  const article = await loadArticle(articleId);
+  if (article) {
+    const result = await fetchArticleBody(article.url);
+    await prisma.article
+      .update({
+        where: { id: article.id },
+        data: {
+          rawHtml: result.rawHtml,
+          extractedText: result.extractedText,
+          extractedExcerpt: result.extractedExcerpt,
+          extractionMethod: result.extractionMethod,
+          bodyFetchStatus: result.status,
+          bodyFetchError: result.error,
+          bodyFetchedAt: result.fetchedAt,
+          robotsAllowed: result.robotsAllowed,
+          paywallLikely: result.paywallLikely,
+          sourceReliability: article.sourceReliability ?? inferSourceReliability(article.publication, article.url),
+          needsReview: true
+        }
+      })
+      .catch(() => {});
+
+    if (result.status !== "success") {
+      logOperationalEvent("warn", "Article body fetch did not fully succeed.", {
+        articleId: article.id,
+        source: article.publication ?? "unknown",
+        status: result.status
+      });
+    }
+
+    await prisma.ingestionRun
+      .create({
+        data: {
+          sourceType: "body_fetch",
+          sourceName: article.publication ?? new URL(article.url).hostname,
+          status: result.status === "success" ? "completed" : result.status === "robots_blocked" ? "blocked" : "failed",
+          itemsFetched: 1,
+          itemsSaved: result.extractedText || result.extractedExcerpt ? 1 : 0,
+          itemsSkipped: result.status === "robots_blocked" ? 1 : 0,
+          completedAt: new Date(),
+          notes: result.error ?? `Body fetch ${result.status} for ${article.url}`
+        }
+      })
+      .catch(() => {});
+
+    return;
+  }
+
+  await updateMockArticle(articleId, async (existing) => {
+    const result = await fetchArticleBody(existing.url);
+    return {
+      ...existing,
+      rawHtml: result.rawHtml,
+      extractedText: result.extractedText,
+      extractedExcerpt: result.extractedExcerpt,
+      extractionMethod: result.extractionMethod,
+      bodyFetchStatus: result.status,
+      bodyFetchError: result.error,
+      bodyFetchedAt: result.fetchedAt,
+      robotsAllowed: result.robotsAllowed,
+      paywallLikely: result.paywallLikely,
+      sourceReliability: existing.sourceReliability ?? inferSourceReliability(existing.publication, existing.url),
+      needsReview: true
+    };
+  });
+}
+
+export async function fetchArticleBodyAction(formData: FormData) {
+  await requireAdminActionAccess();
+  const articleId = String(formData.get("articleId") ?? "");
+  if (!articleId) return;
+  await persistBodyFetch(articleId);
+  revalidatePath("/review");
+  revalidatePath("/admin/status");
+}
+
+export async function fetchBodiesForNeedsReview() {
+  await requireAdminActionAccess();
+  const dbArticles = await prisma.article
+    .findMany({
+      where: { needsReview: true, extractionStatus: { in: ["Needs Review", "New"] } },
+      select: { id: true }
+    })
+    .catch(() => []);
+
+  if (dbArticles.length) {
+    for (const article of dbArticles) {
+      await persistBodyFetch(article.id);
+    }
+  } else {
+    const mockState = await readMockPreviewState().catch(() => null);
+    const previewArticles = mockState?.reviewArticles ?? [];
+    for (const article of previewArticles.filter((item) => item.extractionStatus === "Needs Review" || item.extractionStatus === "New")) {
+      await persistBodyFetch(article.id);
+    }
+  }
+
+  revalidatePath("/review");
+  revalidatePath("/admin/status");
+}
+
+export async function fetchSelectedBodiesAction(formData: FormData) {
+  await requireAdminActionAccess();
+  const articleIds = parseArticleIds(formData);
+  if (!articleIds.length) return;
+
+  for (const articleId of articleIds) {
+    await persistBodyFetch(articleId);
+  }
+
+  revalidatePath("/review");
+  revalidatePath("/admin/status");
 }
 
 export async function saveExtractedFields(formData: FormData) {
+  await requireAdminActionAccess();
   const articleId = String(formData.get("articleId") ?? "");
   if (!articleId) return;
 
@@ -319,9 +458,11 @@ export async function saveExtractedFields(formData: FormData) {
   }
 
   revalidatePath("/review");
+  revalidatePath("/admin/status");
 }
 
 export async function createProjectFromArticle(formData: FormData) {
+  await requireAdminActionAccess();
   const articleId = String(formData.get("articleId") ?? "");
   if (!articleId) return;
 
@@ -406,9 +547,11 @@ export async function createProjectFromArticle(formData: FormData) {
   }).catch(() => {});
 
   revalidatePath("/review");
+  revalidatePath("/admin/status");
 }
 
 export async function createCurrentShowFromArticle(formData: FormData) {
+  await requireAdminActionAccess();
   const articleId = String(formData.get("articleId") ?? "");
   if (!articleId) return;
 
@@ -456,9 +599,11 @@ export async function createCurrentShowFromArticle(formData: FormData) {
   }).catch(() => {});
 
   revalidatePath("/review");
+  revalidatePath("/admin/status");
 }
 
 export async function linkArticleToProject(formData: FormData) {
+  await requireAdminActionAccess();
   const articleId = String(formData.get("articleId") ?? "");
   const projectId = String(formData.get("projectId") ?? "");
   if (!articleId || !projectId) return;
@@ -489,6 +634,7 @@ export async function linkArticleToProject(formData: FormData) {
 }
 
 export async function linkArticleToShow(formData: FormData) {
+  await requireAdminActionAccess();
   const articleId = String(formData.get("articleId") ?? "");
   const showId = String(formData.get("showId") ?? "");
   if (!articleId || !showId) return;
@@ -519,6 +665,7 @@ export async function linkArticleToShow(formData: FormData) {
 }
 
 export async function createOrLinkBuyer(formData: FormData) {
+  await requireAdminActionAccess();
   const articleId = String(formData.get("articleId") ?? "");
   if (!articleId) return;
 
@@ -538,6 +685,7 @@ export async function createOrLinkBuyer(formData: FormData) {
 }
 
 export async function createOrLinkCompanies(formData: FormData) {
+  await requireAdminActionAccess();
   const articleId = String(formData.get("articleId") ?? "");
   if (!articleId) return;
 
@@ -566,6 +714,7 @@ export async function createOrLinkCompanies(formData: FormData) {
 }
 
 export async function createOrLinkPeople(formData: FormData) {
+  await requireAdminActionAccess();
   const articleId = String(formData.get("articleId") ?? "");
   if (!articleId) return;
 
@@ -595,6 +744,7 @@ export async function createOrLinkPeople(formData: FormData) {
 }
 
 export async function createRelationships(formData: FormData) {
+  await requireAdminActionAccess();
   const articleId = String(formData.get("articleId") ?? "");
   if (!articleId) return;
 

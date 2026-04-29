@@ -1,5 +1,4 @@
 import {
-  BarChart3,
   Building2,
   CalendarDays,
   ClipboardList,
@@ -7,6 +6,7 @@ import {
   LayoutDashboard,
   Radio,
   Settings,
+  ShieldCheck,
   UsersRound
 } from "lucide-react";
 
@@ -18,7 +18,8 @@ export const navItems = [
   { href: "/companies", label: "Companies & Talent", icon: UsersRound },
   { href: "/review", label: "Article Review Queue", icon: FileText },
   { href: "/weekly-reports", label: "Weekly Reports", icon: CalendarDays },
-  { href: "/sources", label: "Sources / Ingestion", icon: Settings }
+  { href: "/sources", label: "Sources / Ingestion", icon: Settings },
+  { href: "/admin/status", label: "Admin Status", icon: ShieldCheck }
 ];
 
 export const statusTone: Record<string, string> = {
