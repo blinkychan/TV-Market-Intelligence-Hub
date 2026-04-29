@@ -81,6 +81,14 @@ type CandidateArticle = {
   rawText?: string | null;
 };
 
+const BACKFILL_STATUS = {
+  QUEUED: "queued",
+  RUNNING: "running",
+  COMPLETED: "completed",
+  FAILED: "failed",
+  PAUSED: "paused"
+} as const;
+
 function parseMonthInput(value: string) {
   return parse(`${value}-01`, "yyyy-MM-dd", new Date());
 }
@@ -244,7 +252,7 @@ export async function createBackfillJobs(input: BackfillJobInput): Promise<{ cou
     year,
     month,
     keywords: combineKeywords(input),
-    status: "queued" as BackfillJobStatus,
+    status: BACKFILL_STATUS.QUEUED as BackfillJobStatus,
     articlesFound: 0,
     articlesSaved: 0,
     duplicatesSkipped: 0,
@@ -334,7 +342,7 @@ async function runNextDatabaseBackfillJob(): Promise<RunNextBackfillSummary> {
   }
 
   const nextJob = await prisma.backfillJob.findFirst({
-    where: { status: { in: ["queued", "paused"] } },
+    where: { status: { in: [BACKFILL_STATUS.QUEUED, BACKFILL_STATUS.PAUSED] } },
     orderBy: [{ year: "desc" }, { month: "desc" }, { createdAt: "desc" }]
   });
 
@@ -356,7 +364,7 @@ async function runNextDatabaseBackfillJob(): Promise<RunNextBackfillSummary> {
 
   await prisma.backfillJob.update({
     where: { id: nextJob.id },
-    data: { status: "running", lastError: null }
+    data: { status: BACKFILL_STATUS.RUNNING, lastError: null }
   });
 
   try {
@@ -394,7 +402,7 @@ async function runNextDatabaseBackfillJob(): Promise<RunNextBackfillSummary> {
       articlesSaved += 1;
     }
 
-    const status = candidates.length === 0 ? "failed" : "completed";
+    const status: BackfillJobStatus = candidates.length === 0 ? BACKFILL_STATUS.FAILED : BACKFILL_STATUS.COMPLETED;
     const completedAt = new Date();
     const note =
       candidates.length === 0
@@ -425,7 +433,7 @@ async function runNextDatabaseBackfillJob(): Promise<RunNextBackfillSummary> {
     return {
       dataSource: "database",
       jobId: nextJob.id,
-      status: status === "completed" ? "completed" : "failed",
+      status: status === BACKFILL_STATUS.COMPLETED ? "completed" : "failed",
       source: normalizedNextJob.source,
       year: normalizedNextJob.year,
       month: normalizedNextJob.month,
@@ -440,7 +448,7 @@ async function runNextDatabaseBackfillJob(): Promise<RunNextBackfillSummary> {
     await prisma.backfillJob.update({
       where: { id: nextJob.id },
       data: {
-        status: "failed",
+        status: BACKFILL_STATUS.FAILED,
         lastError: message,
         completedAt: new Date()
       }
@@ -448,7 +456,7 @@ async function runNextDatabaseBackfillJob(): Promise<RunNextBackfillSummary> {
 
     await createBackfillLog({
       sourceName: summarizeJobSource(normalizedNextJob),
-      status: "failed",
+      status: BACKFILL_STATUS.FAILED,
       itemsFetched: 0,
       itemsSaved: 0,
       itemsSkipped: 0,
@@ -473,7 +481,7 @@ async function runNextDatabaseBackfillJob(): Promise<RunNextBackfillSummary> {
 async function runNextMockBackfillJob(): Promise<RunNextBackfillSummary> {
   const previewState = await readMockPreviewState();
   const nextJob = [...previewState.backfillJobs]
-    .filter((job) => job.status === "queued" || job.status === "paused")
+    .filter((job) => job.status === BACKFILL_STATUS.QUEUED || job.status === BACKFILL_STATUS.PAUSED)
     .sort(compareBackfillPriority)[0];
 
   if (!nextJob) {
@@ -487,8 +495,8 @@ async function runNextMockBackfillJob(): Promise<RunNextBackfillSummary> {
     };
   }
 
-  const runningJobs = previewState.backfillJobs.map((job) =>
-    job.id === nextJob.id ? { ...job, status: "running", lastError: null, updatedAt: new Date() } : job
+  const runningJobs: MockBackfillJob[] = previewState.backfillJobs.map((job): MockBackfillJob =>
+    job.id === nextJob.id ? { ...job, status: BACKFILL_STATUS.RUNNING as BackfillJobStatus, lastError: null, updatedAt: new Date() } : job
   );
   await saveMockBackfillJobs(runningJobs);
 
@@ -537,7 +545,7 @@ async function runNextMockBackfillJob(): Promise<RunNextBackfillSummary> {
     });
   }
 
-  const status: BackfillJobStatus = "completed";
+  const status: BackfillJobStatus = BACKFILL_STATUS.COMPLETED;
   const now = new Date();
   await appendMockIngestionResult({
     articles,
@@ -555,7 +563,7 @@ async function runNextMockBackfillJob(): Promise<RunNextBackfillSummary> {
   });
 
   const refreshedState = await readMockPreviewState();
-  const finalJobs = refreshedState.backfillJobs.map((job) =>
+  const finalJobs: MockBackfillJob[] = refreshedState.backfillJobs.map((job): MockBackfillJob =>
     job.id === nextJob.id
       ? {
           ...job,
@@ -625,11 +633,11 @@ export async function getBackfillDashboardData(): Promise<BackfillDashboardData>
       jobs: sortedJobs,
       logs,
       statusPanel: {
-        queuedJobs: sortedJobs.filter((job) => job.status === "queued" || job.status === "paused").length,
-        completedJobs: sortedJobs.filter((job) => job.status === "completed").length,
-        failedJobs: sortedJobs.filter((job) => job.status === "failed").length,
+        queuedJobs: sortedJobs.filter((job) => job.status === BACKFILL_STATUS.QUEUED || job.status === BACKFILL_STATUS.PAUSED).length,
+        completedJobs: sortedJobs.filter((job) => job.status === BACKFILL_STATUS.COMPLETED).length,
+        failedJobs: sortedJobs.filter((job) => job.status === BACKFILL_STATUS.FAILED).length,
         articlesSaved: sortedJobs.reduce((total, job) => total + job.articlesSaved, 0),
-        estimatedRemainingJobs: sortedJobs.filter((job) => job.status === "queued" || job.status === "paused" || job.status === "running").length
+        estimatedRemainingJobs: sortedJobs.filter((job) => job.status === BACKFILL_STATUS.QUEUED || job.status === BACKFILL_STATUS.PAUSED || job.status === BACKFILL_STATUS.RUNNING).length
       }
     };
   } catch (error) {
@@ -658,11 +666,11 @@ export async function getBackfillDashboardData(): Promise<BackfillDashboardData>
       jobs,
       logs,
       statusPanel: {
-        queuedJobs: jobs.filter((job) => job.status === "queued" || job.status === "paused").length,
-        completedJobs: jobs.filter((job) => job.status === "completed").length,
-        failedJobs: jobs.filter((job) => job.status === "failed").length,
+        queuedJobs: jobs.filter((job) => job.status === BACKFILL_STATUS.QUEUED || job.status === BACKFILL_STATUS.PAUSED).length,
+        completedJobs: jobs.filter((job) => job.status === BACKFILL_STATUS.COMPLETED).length,
+        failedJobs: jobs.filter((job) => job.status === BACKFILL_STATUS.FAILED).length,
         articlesSaved: jobs.reduce((total, job) => total + job.articlesSaved, 0),
-        estimatedRemainingJobs: jobs.filter((job) => job.status === "queued" || job.status === "paused" || job.status === "running").length
+        estimatedRemainingJobs: jobs.filter((job) => job.status === BACKFILL_STATUS.QUEUED || job.status === BACKFILL_STATUS.PAUSED || job.status === BACKFILL_STATUS.RUNNING).length
       },
       errorMessage: error instanceof Error ? error.message : "Unknown backfill queue error."
     };
