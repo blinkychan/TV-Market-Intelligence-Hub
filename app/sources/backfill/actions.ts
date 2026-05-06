@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { recordAuditLog } from "@/lib/audit";
 import { createBackfillJobs, runNextBackfillJob } from "@/lib/backfill";
 import { upsertSourceCoverage } from "@/lib/data-quality";
+import { withControlledJob } from "@/lib/job-control";
 import { logOperationalEvent } from "@/lib/ops-log";
 import { requireAdminCapabilityAccess } from "@/lib/team-auth";
 
@@ -42,8 +43,16 @@ export async function queueBackfillJobs(formData: FormData) {
 }
 
 export async function runNextBackfillJobAction() {
-  await requireAdminCapabilityAccess();
-  const summary = await runNextBackfillJob("auto");
+  const auth = await requireAdminCapabilityAccess();
+  const summary = await withControlledJob({
+    jobType: "backfill",
+    createdByUserId: auth.user?.id ?? null,
+    createdByEmail: auth.user?.email ?? null,
+    inputJson: { mode: "auto" },
+    lockKey: "backfill-next",
+    dedupeMinutes: 5,
+    handler: async () => runNextBackfillJob("auto")
+  });
   if (summary.source) {
     await upsertSourceCoverage({
       sourceName: summary.source,

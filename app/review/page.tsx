@@ -105,11 +105,12 @@ type ReviewArticle = {
   changeHistory?: AuditLogEntry[];
 };
 
-const statusOptions = ["All", "New", "Needs Review", "Approved", "Rejected", "Duplicate"];
+const statusOptions = ["All", "New", "Needs Review", "Possible Match", "Approved", "Rejected", "Duplicate"];
 
 function extractionTone(status: string) {
   if (status === "Approved") return "bg-emerald-50 text-emerald-700 ring-emerald-200";
   if (status === "Needs Review") return "bg-amber-50 text-amber-800 ring-amber-200";
+  if (status === "Possible Match") return "bg-violet-50 text-violet-700 ring-violet-200";
   if (status === "New") return "bg-sky-50 text-sky-700 ring-sky-200";
   if (status === "Rejected") return "bg-rose-50 text-rose-700 ring-rose-200";
   if (status === "Duplicate") return "bg-slate-100 text-slate-700 ring-slate-200";
@@ -409,6 +410,7 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
       : [];
 
   const queueCount = articles.filter((article) => article.extractionStatus === "Needs Review" || article.extractionStatus === "New").length;
+  const possibleMatchCount = articles.filter((article) => article.extractionStatus === "Possible Match").length;
   const approvedCount = articles.filter((article) => article.extractionStatus === "Approved").length;
   const duplicateCount = articles.filter((article) => article.extractionStatus === "Duplicate").length;
   const exportParams = new URLSearchParams(
@@ -450,10 +452,14 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
         ) : null}
       </section>
 
-      <section className="grid gap-4 md:grid-cols-3">
+      <section className="grid gap-4 md:grid-cols-4">
         <Card className="shadow-panel">
           <CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Needs Attention</CardTitle></CardHeader>
           <CardContent><div className="text-3xl font-semibold">{queueCount}</div></CardContent>
+        </Card>
+        <Card className="shadow-panel">
+          <CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Possible Matches</CardTitle></CardHeader>
+          <CardContent><div className="text-3xl font-semibold">{possibleMatchCount}</div></CardContent>
         </Card>
         <Card className="shadow-panel">
           <CardHeader className="pb-2"><CardTitle className="text-sm text-muted-foreground">Approved</CardTitle></CardHeader>

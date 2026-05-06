@@ -78,7 +78,7 @@ export function CsvImportManager({ canImport }: CsvImportManagerProps) {
     const response = await fetch("/api/import/preview", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ entityType, rows: buildRows() })
+      body: JSON.stringify({ entityType, fileName: csvState.fileName, rows: buildRows() })
     });
     const payload = (await response.json().catch(() => null)) as ImportPreviewResult | { error?: string } | null;
     setLoadingPreview(false);
@@ -96,7 +96,7 @@ export function CsvImportManager({ canImport }: CsvImportManagerProps) {
     const response = await fetch("/api/import/confirm", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ entityType, rows: buildRows() })
+      body: JSON.stringify({ entityType, fileName: csvState.fileName, rows: buildRows() })
     });
     const payload = (await response.json().catch(() => null)) as
       | { created?: number; skippedDuplicates?: number; skippedErrors?: number; error?: string }

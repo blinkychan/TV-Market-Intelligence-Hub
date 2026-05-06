@@ -63,6 +63,8 @@ type ExtractionInput = {
   headlineOnly: boolean;
 };
 
+const MAX_EXTRACTION_INPUT_LENGTH = 20_000;
+
 function normalizeDate(value?: Date | string | null) {
   if (!value) return null;
   const parsed = new Date(value);
@@ -133,9 +135,10 @@ function selectExtractionInput(article: ArticleLike): ExtractionInput {
   const excerptText = article.extractedExcerpt?.trim() || "";
   const summaryText = article.summary?.trim() || "";
   const basis: ExtractionBasis = bodyText ? "body" : excerptText ? "excerpt" : summaryText ? "summary" : "headline";
+  const sourceText = (bodyText || excerptText || summaryText || article.headline).slice(0, MAX_EXTRACTION_INPUT_LENGTH);
   return {
     basis,
-    sourceText: bodyText || excerptText || summaryText || article.headline,
+    sourceText,
     headlineOnly: basis === "headline"
   };
 }

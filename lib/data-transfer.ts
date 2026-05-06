@@ -56,6 +56,17 @@ function parseDate(value: string | null | undefined) {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+function isValidUrl(value: string | null | undefined) {
+  const text = String(value ?? "").trim();
+  if (!text) return false;
+  try {
+    new URL(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function parseBool(value: string | null | undefined) {
   const text = String(value ?? "").trim().toLowerCase();
   return text === "true" || text === "yes" || text === "1" || text === "y";
@@ -184,15 +195,22 @@ export async function previewCsvImport(entityType: ImportEntityType, rows: Array
       if (values.type && !normalizeProjectType(values.type)) errors.push("Project type is not recognized.");
       if (values.status && !normalizeProjectStatus(values.status)) errors.push("Project status is not recognized.");
       if (values.announcementDate && !parseDate(values.announcementDate)) warnings.push("Announcement date could not be parsed.");
+      if (values.sourceUrl && !isValidUrl(values.sourceUrl)) errors.push("Source URL is not a valid URL.");
     }
 
     if (entityType === "current-shows") {
       if (values.premiereDate && !parseDate(values.premiereDate)) warnings.push("Premiere date could not be parsed.");
       if (values.seasonType && !normalizeSeasonType(values.seasonType)) warnings.push("Season type is not recognized.");
+      if (values.sourceUrl && !isValidUrl(values.sourceUrl)) errors.push("Source URL is not a valid URL.");
     }
 
-    if (entityType === "articles" && values.publishedDate && !parseDate(values.publishedDate)) {
-      warnings.push("Published date could not be parsed.");
+    if (entityType === "articles") {
+      if (values.publishedDate && !parseDate(values.publishedDate)) {
+        warnings.push("Published date could not be parsed.");
+      }
+      if (values.url && !isValidUrl(values.url)) {
+        errors.push("Article URL is not a valid URL.");
+      }
     }
 
     const duplicateOfId = databaseWritable ? await findDuplicateForImport(entityType, values) : null;

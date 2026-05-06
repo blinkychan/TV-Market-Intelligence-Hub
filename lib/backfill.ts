@@ -5,6 +5,7 @@ import { appendMockIngestionResult, readMockPreviewState, saveMockBackfillJobs }
 import { canUseMockPreview, mockPreviewDisabledReason } from "@/lib/runtime-mode";
 import { prisma } from "@/lib/prisma";
 import type { MockReviewArticle } from "@/lib/mock-review";
+import { scoreArticleRelevance } from "@/lib/source-relevance";
 
 export type BackfillMode = "auto" | "real" | "mock";
 
@@ -373,8 +374,21 @@ async function runNextDatabaseBackfillJob(): Promise<RunNextBackfillSummary> {
 
     let articlesSaved = 0;
     let duplicatesSkipped = 0;
+    let excluded = 0;
 
     for (const candidate of candidates) {
+      const relevance = scoreArticleRelevance({
+        headline: candidate.headline,
+        summary: candidate.summary,
+        bodyText: candidate.rawText ?? null,
+        publication: candidate.publication,
+        url: candidate.url
+      });
+      if (relevance.decision === "excluded") {
+        excluded += 1;
+        continue;
+      }
+
       if (existingUrls.has(candidate.url)) {
         duplicatesSkipped += 1;
         continue;
@@ -389,12 +403,16 @@ async function runNextDatabaseBackfillJob(): Promise<RunNextBackfillSummary> {
           publication: candidate.publication,
           publishedDate: candidate.publishedDate,
           summary: candidate.summary,
+          relevanceScore: relevance.score,
+          relevanceBand: relevance.band,
+          relevanceReasons: relevance.reasons.join(" | "),
+          relevanceDecision: relevance.decision,
           rawText: toStoredRawText({ ...candidate, rawText: await maybeFetchBody(candidate) }),
           sourceType: "backfill",
           ingestionSource: "Backfill",
-          extractionStatus: "Needs Review",
+          extractionStatus: relevance.decision === "possible_match" ? "Possible Match" : "Needs Review",
           needsReview: true,
-          suspectedCategory: candidate.suspectedCategory,
+          suspectedCategory: relevance.classification.replaceAll("_", " "),
           confidenceScore: 0.55
         }
       });
@@ -407,7 +425,7 @@ async function runNextDatabaseBackfillJob(): Promise<RunNextBackfillSummary> {
     const note =
       candidates.length === 0
         ? "No historical search adapter is configured yet. Plug in a search API or use manual URL entry for live backfill retrieval."
-        : `Processed one backfill batch from ${summarizeJobSource(normalizedNextJob)}.`;
+        : `Processed one backfill batch from ${summarizeJobSource(normalizedNextJob)}. Saved ${articlesSaved}, excluded ${excluded}, duplicates ${duplicatesSkipped}.`;
 
     await prisma.backfillJob.update({
       where: { id: nextJob.id },
@@ -504,8 +522,21 @@ async function runNextMockBackfillJob(): Promise<RunNextBackfillSummary> {
   const existingUrls = new Set(previewState.reviewArticles.map((article) => article.url));
   const articles: MockReviewArticle[] = [];
   let duplicatesSkipped = 0;
+  let excluded = 0;
 
   for (const candidate of candidates) {
+    const relevance = scoreArticleRelevance({
+      headline: candidate.headline,
+      summary: candidate.summary,
+      bodyText: candidate.rawText ?? null,
+      publication: candidate.publication,
+      url: candidate.url
+    });
+    if (relevance.decision === "excluded") {
+      excluded += 1;
+      continue;
+    }
+
     if (existingUrls.has(candidate.url)) {
       duplicatesSkipped += 1;
       continue;
@@ -519,10 +550,14 @@ async function runNextMockBackfillJob(): Promise<RunNextBackfillSummary> {
       publishedDate: candidate.publishedDate,
       url: candidate.url,
       sourceType: "backfill",
-      extractionStatus: "Needs Review",
+      extractionStatus: relevance.decision === "possible_match" ? "Possible Match" : "Needs Review",
       extractionMode: "mock",
-      suspectedCategory: candidate.suspectedCategory,
+      suspectedCategory: relevance.classification.replaceAll("_", " "),
       confidenceScore: 0.58,
+      relevanceScore: relevance.score,
+      relevanceBand: relevance.band,
+      relevanceReasons: relevance.reasons.join(" | "),
+      relevanceDecision: relevance.decision,
       summary: candidate.summary,
       linkedProjectId: null,
       linkedProjectTitle: null,
@@ -558,7 +593,7 @@ async function runNextMockBackfillJob(): Promise<RunNextBackfillSummary> {
       itemsSkipped: duplicatesSkipped,
       startedAt: now,
       completedAt: now,
-      notes: `Processed one mock backfill batch from ${summarizeJobSource(nextJob)}.`
+      notes: `Processed one mock backfill batch from ${summarizeJobSource(nextJob)}. Saved ${articles.length}, excluded ${excluded}, duplicates ${duplicatesSkipped}.`
     }
   });
 
@@ -589,7 +624,7 @@ async function runNextMockBackfillJob(): Promise<RunNextBackfillSummary> {
     articlesFound: candidates.length,
     articlesSaved: articles.length,
     duplicatesSkipped,
-    message: `Processed one mock backfill batch from ${summarizeJobSource(nextJob)}.`
+    message: `Processed one mock backfill batch from ${summarizeJobSource(nextJob)}. Saved ${articles.length}, excluded ${excluded}, duplicates ${duplicatesSkipped}.`
   };
 }
 

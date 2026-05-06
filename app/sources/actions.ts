@@ -1,13 +1,17 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import type { SourceCoverageType } from "@prisma/client";
 import { randomUUID } from "node:crypto";
 import { recordAuditLog } from "@/lib/audit";
 import { upsertSourceCoverage } from "@/lib/data-quality";
+import { urlSchema } from "@/lib/request-validation";
 import { appendMockIngestionResult } from "@/lib/mock-preview-store";
+import { withControlledJob } from "@/lib/job-control";
 import { logOperationalEvent } from "@/lib/ops-log";
 import { prisma } from "@/lib/prisma";
 import { ingestRSSFeeds } from "@/lib/rss-ingestion";
+import { getSourceConnector } from "@/lib/source-connectors";
 import { inferSourceReliability } from "@/lib/source-reliability";
 import { requireAdminCapabilityAccess } from "@/lib/team-auth";
 import { triggerWatchlistAlertsForEntity } from "@/lib/watchlists";
@@ -27,6 +31,7 @@ export async function saveRssFeed(formData: FormData) {
   const feedUrl = String(formData.get("feedUrl") ?? "").trim();
   const category = String(formData.get("category") ?? "").trim();
   const enabled = formData.get("enabled") === "on";
+  const connector = getSourceConnector(publicationName);
 
   if (!publicationName || !feedUrl || !category) return;
 
@@ -47,8 +52,14 @@ export async function saveRssFeed(formData: FormData) {
   }).catch(() => {});
   await upsertSourceCoverage({
     sourceName: publicationName,
-    sourceType: "rss",
+    sourceType: connector?.sourceType ?? "rss",
+    baseUrl: connector?.baseUrl ?? null,
+    rssUrlsJson: connector?.rssUrls ?? [feedUrl],
     enabled,
+    reliabilityScore: connector?.reliabilityScore ?? null,
+    allowedCategories: connector?.allowedCategories.join(", ") ?? null,
+    blockedKeywords: connector?.blockedKeywords.join(", ") ?? null,
+    preferredKeywords: connector?.preferredKeywords.join(", ") ?? null,
     checkedAt: undefined,
     sourceReliability: inferSourceReliability(publicationName, feedUrl),
     notes: category
@@ -58,12 +69,43 @@ export async function saveRssFeed(formData: FormData) {
   revalidatePath("/admin/status");
 }
 
+export async function saveSourceCoverageConfig(formData: FormData) {
+  await requireAdminCapabilityAccess();
+  const sourceName = String(formData.get("sourceName") ?? "").trim();
+  const sourceTypeValue = String(formData.get("sourceType") ?? "rss").trim();
+  const sourceType: SourceCoverageType =
+    sourceTypeValue === "trade" ||
+    sourceTypeValue === "official_press" ||
+    sourceTypeValue === "calendar" ||
+    sourceTypeValue === "manual_csv" ||
+    sourceTypeValue === "search_api" ||
+    sourceTypeValue === "rss"
+      ? sourceTypeValue
+      : "rss";
+  if (!sourceName) return;
+
+  await upsertSourceCoverage({
+    sourceName,
+    sourceType,
+    baseUrl: String(formData.get("baseUrl") ?? "").trim() || null,
+    enabled: formData.get("enabled") === "on",
+    reliabilityScore: Number(formData.get("reliabilityScore") ?? "") || null,
+    allowedCategories: String(formData.get("allowedCategories") ?? "").trim() || null,
+    blockedKeywords: String(formData.get("blockedKeywords") ?? "").trim() || null,
+    preferredKeywords: String(formData.get("preferredKeywords") ?? "").trim() || null,
+    notes: String(formData.get("notes") ?? "").trim() || null
+  });
+
+  revalidatePath("/sources/coverage");
+}
+
 export async function addManualArticle(formData: FormData) {
   await requireAdminCapabilityAccess();
   const url = String(formData.get("url") ?? "").trim();
   const publication = String(formData.get("publication") ?? "").trim() || safeHost(url);
   const notes = String(formData.get("notes") ?? "").trim();
   if (!url) return;
+  if (!urlSchema.safeParse(url).success) return;
 
   try {
     const existing = await prisma.article.findUnique({ where: { url } }).catch(() => null);
@@ -208,9 +250,17 @@ export async function addManualArticle(formData: FormData) {
 }
 
 export async function runRssIngestion() {
-  await requireAdminCapabilityAccess();
+  const auth = await requireAdminCapabilityAccess();
   try {
-    await ingestRSSFeeds("real");
+    await withControlledJob({
+      jobType: "rss_ingestion",
+      createdByUserId: auth.user?.id ?? null,
+      createdByEmail: auth.user?.email ?? null,
+      inputJson: { mode: "real" },
+      lockKey: "rss-ingestion",
+      dedupeMinutes: 5,
+      handler: async () => ingestRSSFeeds("real")
+    });
     await recordAuditLog({
       entityType: "Article",
       entityId: "rss-batch",
@@ -243,9 +293,18 @@ export async function runRssIngestion() {
 }
 
 export async function runMockRssIngestion() {
-  await requireAdminCapabilityAccess();
+  const auth = await requireAdminCapabilityAccess();
   try {
-    await ingestRSSFeeds("mock");
+    await withControlledJob({
+      jobType: "rss_ingestion",
+      createdByUserId: auth.user?.id ?? null,
+      createdByEmail: auth.user?.email ?? null,
+      inputJson: { mode: "mock" },
+      lockKey: "rss-ingestion-mock",
+      dedupeMinutes: 2,
+      skipRateLimitInMock: false,
+      handler: async () => ingestRSSFeeds("mock")
+    });
     await recordAuditLog({
       entityType: "Article",
       entityId: "rss-mock-batch",

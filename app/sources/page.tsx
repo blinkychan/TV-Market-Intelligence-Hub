@@ -267,14 +267,17 @@ export default async function SourcesPage() {
               <p className="text-sm text-muted-foreground">Bring in structured batches for projects, current shows, buyers, companies, people, or articles.</p>
             </CardHeader>
             <CardContent className="space-y-3">
-              <div className="rounded-lg border border-dashed bg-slate-50 p-5 text-sm text-muted-foreground">
-                Use the dedicated import manager for mapped previews, duplicate checks, audit-safe writes, and manual backfill.
-              </div>
-              <ButtonLink href="/sources/import" variant="secondary" className="w-full">
-                <Upload className="h-4 w-4" /> Open CSV Import Manager
-              </ButtonLink>
-            </CardContent>
-          </Card>
+            <div className="rounded-lg border border-dashed bg-slate-50 p-5 text-sm text-muted-foreground">
+              Use the dedicated import manager for mapped previews, duplicate checks, audit-safe writes, and manual backfill.
+            </div>
+            <ButtonLink href="/sources/import" variant="secondary" className="w-full">
+              <Upload className="h-4 w-4" /> Open CSV Import Manager
+            </ButtonLink>
+            <ButtonLink href="/sources/coverage" variant="secondary" className="w-full">
+              <Database className="h-4 w-4" /> Open Source Coverage
+            </ButtonLink>
+          </CardContent>
+        </Card>
         </div>
       </div>
 
@@ -359,7 +362,7 @@ export default async function SourcesPage() {
         </CardHeader>
         <CardContent className="grid gap-4 md:grid-cols-3">
           <div className="rounded-lg border bg-slate-50 p-4 text-sm text-muted-foreground">
-            RSS runs fetch only metadata and links, apply a simple relevance filter, and route matching items into the review queue.
+            RSS runs fetch only metadata and links, score source relevance, route strong matches into the review queue, and park ambiguous items as Possible Matches.
           </div>
           <div className="rounded-lg border bg-slate-50 p-4 text-sm text-muted-foreground">
             Manual URLs create review-ready article placeholders without scraping or full-text storage.

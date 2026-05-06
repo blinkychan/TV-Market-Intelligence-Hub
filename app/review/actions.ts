@@ -19,6 +19,7 @@ import {
 } from "@/lib/data-quality";
 import { findBestDuplicateWarning, type DuplicateGroupRecord } from "@/lib/deduplication";
 import { extractStructuredTVData, extractStructuredTVDataWithAI, type StructuredTVExtraction } from "@/lib/extraction";
+import { ensureJobRunActive, withControlledJob } from "@/lib/job-control";
 import { readMockPreviewState, updateMockReviewArticle } from "@/lib/mock-preview-store";
 import { logOperationalEvent } from "@/lib/ops-log";
 import { prisma } from "@/lib/prisma";
@@ -1035,24 +1036,45 @@ async function persistAiExtraction(articleId: string, confirmOverwrite: boolean)
 }
 
 export async function runAiExtractionAction(formData: FormData) {
-  await requireEditorActionAccess();
+  const auth = await requireEditorActionAccess();
   const articleId = String(formData.get("articleId") ?? "");
   const confirmOverwrite = parseBoolean(formData.get("confirmOverwrite"));
+  const force = parseBoolean(formData.get("force"));
   if (!articleId) return;
 
-  await persistAiExtraction(articleId, confirmOverwrite);
+  await withControlledJob({
+    jobType: "ai_extraction",
+    createdByUserId: auth.user?.id ?? null,
+    createdByEmail: auth.user?.email ?? null,
+    inputJson: { articleId, confirmOverwrite, force },
+    lockKey: `ai:${articleId}`,
+    dedupeMinutes: force && auth.user?.role === "admin" ? undefined : 20,
+    handler: async () => persistAiExtraction(articleId, confirmOverwrite)
+  });
   revalidatePath("/review");
   revalidatePath("/admin/status");
 }
 
 export async function runAiExtractionForSelectedAction(formData: FormData) {
-  await requireEditorActionAccess();
+  const auth = await requireEditorActionAccess();
   const articleIds = parseArticleIds(formData);
   const confirmOverwrite = parseBoolean(formData.get("confirmOverwrite"));
+  const force = parseBoolean(formData.get("force"));
   if (!articleIds.length) return;
 
   for (const articleId of articleIds) {
-    await persistAiExtraction(articleId, confirmOverwrite);
+    await withControlledJob({
+      jobType: "ai_extraction",
+      createdByUserId: auth.user?.id ?? null,
+      createdByEmail: auth.user?.email ?? null,
+      inputJson: { articleId, confirmOverwrite, force, bulk: true },
+      lockKey: `ai:${articleId}`,
+      dedupeMinutes: force && auth.user?.role === "admin" ? undefined : 20,
+      handler: async (jobRun) => {
+        await ensureJobRunActive(jobRun.id);
+        return persistAiExtraction(articleId, confirmOverwrite);
+      }
+    });
   }
 
   revalidatePath("/review");
@@ -1184,47 +1206,80 @@ async function persistBodyFetch(articleId: string) {
 }
 
 export async function fetchArticleBodyAction(formData: FormData) {
-  await requireAdminCapabilityAccess();
+  const auth = await requireAdminCapabilityAccess();
   const articleId = String(formData.get("articleId") ?? "");
   if (!articleId) return;
-  await persistBodyFetch(articleId);
+  await withControlledJob({
+    jobType: "body_extraction",
+    createdByUserId: auth.user?.id ?? null,
+    createdByEmail: auth.user?.email ?? null,
+    inputJson: { articleId },
+    lockKey: `body:${articleId}`,
+    dedupeMinutes: 10,
+    handler: async () => persistBodyFetch(articleId)
+  });
   revalidatePath("/review");
   revalidatePath("/admin/status");
 }
 
 export async function fetchBodiesForNeedsReview() {
-  await requireAdminCapabilityAccess();
-  const dbArticles = await prisma.article
-    .findMany({
-      where: { needsReview: true, extractionStatus: { in: ["Needs Review", "New"] } },
-      select: { id: true }
-    })
-    .catch(() => []);
+  const auth = await requireAdminCapabilityAccess();
+  await withControlledJob({
+    jobType: "body_extraction",
+    createdByUserId: auth.user?.id ?? null,
+    createdByEmail: auth.user?.email ?? null,
+    inputJson: { mode: "needs_review_batch" },
+    lockKey: "body-batch:needs-review",
+    dedupeMinutes: 5,
+    handler: async (jobRun) => {
+      const dbArticles = await prisma.article
+        .findMany({
+          where: { needsReview: true, extractionStatus: { in: ["Needs Review", "New"] } },
+          select: { id: true }
+        })
+        .catch(() => []);
 
-  if (dbArticles.length) {
-    for (const article of dbArticles) {
-      await persistBodyFetch(article.id);
+      if (dbArticles.length) {
+        for (const article of dbArticles) {
+          await ensureJobRunActive(jobRun.id);
+          await persistBodyFetch(article.id);
+        }
+      } else {
+        const mockState = await readMockPreviewState().catch(() => null);
+        const previewArticles = mockState?.reviewArticles ?? [];
+        for (const article of previewArticles.filter((item) => item.extractionStatus === "Needs Review" || item.extractionStatus === "New")) {
+          await ensureJobRunActive(jobRun.id);
+          await persistBodyFetch(article.id);
+        }
+      }
+      return { processed: true };
     }
-  } else {
-    const mockState = await readMockPreviewState().catch(() => null);
-    const previewArticles = mockState?.reviewArticles ?? [];
-    for (const article of previewArticles.filter((item) => item.extractionStatus === "Needs Review" || item.extractionStatus === "New")) {
-      await persistBodyFetch(article.id);
-    }
-  }
+  });
 
   revalidatePath("/review");
   revalidatePath("/admin/status");
 }
 
 export async function fetchSelectedBodiesAction(formData: FormData) {
-  await requireAdminCapabilityAccess();
+  const auth = await requireAdminCapabilityAccess();
   const articleIds = parseArticleIds(formData);
   if (!articleIds.length) return;
 
-  for (const articleId of articleIds) {
-    await persistBodyFetch(articleId);
-  }
+  await withControlledJob({
+    jobType: "body_extraction",
+    createdByUserId: auth.user?.id ?? null,
+    createdByEmail: auth.user?.email ?? null,
+    inputJson: { articleIds, mode: "selected_batch" },
+    lockKey: `body-batch:selected:${articleIds.join(",")}`,
+    dedupeMinutes: 5,
+    handler: async (jobRun) => {
+      for (const articleId of articleIds) {
+        await ensureJobRunActive(jobRun.id);
+        await persistBodyFetch(articleId);
+      }
+      return { processed: articleIds.length };
+    }
+  });
 
   revalidatePath("/review");
   revalidatePath("/admin/status");

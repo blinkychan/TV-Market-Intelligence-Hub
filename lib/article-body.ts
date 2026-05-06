@@ -1,3 +1,5 @@
+import { logOperationalEvent } from "@/lib/ops-log";
+
 export type BodyFetchStatus =
   | "not_fetched"
   | "success"
@@ -21,6 +23,8 @@ export type BodyFetchResult = {
 
 const BODY_USER_AGENT = "TV Market Intelligence Hub/0.1 (article body extraction; metadata + internal review only)";
 const FETCH_TIMEOUT_MS = 8000;
+const MAX_HTML_BYTES = 1_000_000;
+const MAX_EXTRACTED_TEXT_LENGTH = 20_000;
 
 async function loadModule<T>(specifier: string): Promise<T | null> {
   try {
@@ -125,6 +129,41 @@ function truncateExcerpt(text: string | null, maxLength = 280) {
   return `${normalized.slice(0, maxLength - 1).trimEnd()}...`;
 }
 
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchWithRetry(url: string, init: RequestInit, label: string) {
+  const delays = [250, 800];
+  let attempts = 0;
+
+  while (true) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
+    try {
+      const response = await fetch(url, { ...init, signal: controller.signal });
+      clearTimeout(timeout);
+
+      if (response.ok || response.status === 401 || response.status === 403 || response.status < 500 || attempts >= delays.length) {
+        return { response, attempts };
+      }
+
+      attempts += 1;
+      logOperationalEvent("warn", `${label} retry scheduled.`, { url, status: response.status, retryCount: attempts });
+      await delay(delays[attempts - 1]);
+    } catch (error) {
+      clearTimeout(timeout);
+      if (attempts >= delays.length) {
+        throw error;
+      }
+      attempts += 1;
+      logOperationalEvent("warn", `${label} retry scheduled after fetch failure.`, { url, retryCount: attempts });
+      await delay(delays[attempts - 1]);
+    }
+  }
+}
+
 function detectPaywall(html: string) {
   const normalized = html.toLowerCase();
   return ["subscribe to continue", "subscriber-only", "sign in to continue", "already a subscriber", "join now to read"].some((marker) =>
@@ -141,14 +180,10 @@ export async function checkRobotsAllowed(url: string): Promise<boolean | null> {
   try {
     const target = new URL(url);
     const robotsUrl = `${target.origin}/robots.txt`;
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-    const response = await fetch(robotsUrl, {
+    const { response } = await fetchWithRetry(robotsUrl, {
       headers: { "user-agent": BODY_USER_AGENT },
-      cache: "no-store",
-      signal: controller.signal
-    });
-    clearTimeout(timeout);
+      cache: "no-store"
+    }, "robots fetch");
 
     if (!response.ok) return null;
 
@@ -189,7 +224,7 @@ export async function extractReadableText(html: string, url = "https://example.c
     const dom = new runtime.JSDOM(html, { url });
     const reader = new runtime.Readability(dom.window.document);
     const article = reader.parse();
-    const extractedText = article?.textContent?.replace(/\s+/g, " ").trim() ?? null;
+    const extractedText = article?.textContent?.replace(/\s+/g, " ").trim().slice(0, MAX_EXTRACTED_TEXT_LENGTH) ?? null;
 
     return {
       extractedText,
@@ -225,19 +260,14 @@ export async function fetchArticleBody(url: string): Promise<BodyFetchResult> {
     };
   }
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-
   try {
-    const response = await fetch(url, {
+    const { response, attempts } = await fetchWithRetry(url, {
       headers: {
         "user-agent": BODY_USER_AGENT,
         accept: "text/html,application/xhtml+xml"
       },
-      cache: "no-store",
-      signal: controller.signal
-    });
-    clearTimeout(timeout);
+      cache: "no-store"
+    }, "article body fetch");
 
     if (!response.ok) {
       return {
@@ -248,12 +278,40 @@ export async function fetchArticleBody(url: string): Promise<BodyFetchResult> {
         extractedText: null,
         extractedExcerpt: null,
         extractionMethod: null,
-        error: `Fetch failed with ${response.status}.`,
+        error: `Fetch failed with ${response.status}.${attempts ? ` Retries attempted: ${attempts}.` : ""}`,
+        fetchedAt: new Date()
+      };
+    }
+
+    const contentLength = Number(response.headers.get("content-length") ?? "0");
+    if (contentLength > MAX_HTML_BYTES) {
+      return {
+        status: "fetch_error",
+        robotsAllowed,
+        paywallLikely: false,
+        rawHtml: null,
+        extractedText: null,
+        extractedExcerpt: null,
+        extractionMethod: null,
+        error: "Article body exceeded the maximum allowed size.",
         fetchedAt: new Date()
       };
     }
 
     const rawHtml = await response.text();
+    if (rawHtml.length > MAX_HTML_BYTES) {
+      return {
+        status: "fetch_error",
+        robotsAllowed,
+        paywallLikely: false,
+        rawHtml: null,
+        extractedText: null,
+        extractedExcerpt: null,
+        extractionMethod: null,
+        error: "Article body exceeded the maximum allowed size.",
+        fetchedAt: new Date()
+      };
+    }
     const readable = await extractReadableText(rawHtml, url);
 
     if (readable.paywallLikely) {
@@ -296,7 +354,6 @@ export async function fetchArticleBody(url: string): Promise<BodyFetchResult> {
       fetchedAt: new Date()
     };
   } catch (error) {
-    clearTimeout(timeout);
     const timedOut = error instanceof Error && error.name === "AbortError";
     return {
       status: timedOut ? "timeout" : "fetch_error",

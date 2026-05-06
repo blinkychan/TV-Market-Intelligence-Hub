@@ -3,33 +3,27 @@ import Parser from "rss-parser";
 import { detectArticleMissingData, syncMissingDataFlags, upsertSourceCoverage } from "@/lib/data-quality";
 import { FEEDS } from "@/lib/feeds";
 import { appendMockIngestionResult, readMockPreviewState } from "@/lib/mock-preview-store";
+import { logOperationalEvent } from "@/lib/ops-log";
 import { mockFeedEntries } from "@/lib/mock-rss";
 import { prisma } from "@/lib/prisma";
+import { scoreArticleRelevance } from "@/lib/source-relevance";
+import { getSourceConnector } from "@/lib/source-connectors";
 import { inferSourceReliability } from "@/lib/source-reliability";
 import { triggerWatchlistAlertsForEntity } from "@/lib/watchlists";
 
 const parser = new Parser();
-
-const RELEVANCE_KEYWORDS = [
-  "series",
-  "pilot",
-  "development",
-  "drama",
-  "comedy",
-  "sells to",
-  "lands at",
-  "ordered",
-  "picked up",
-  "renewal",
-  "cancellation",
-  "cast"
-];
 
 type FeedLike = {
   publicationName: string;
   feedUrl: string;
   category: string;
   enabled: boolean;
+  baseUrl?: string | null;
+  reliabilityScore?: number | null;
+  allowedCategories?: string | null;
+  blockedKeywords?: string | null;
+  preferredKeywords?: string | null;
+  sourceType?: string | null;
 };
 
 type IngestionMode = "real" | "mock";
@@ -48,8 +42,77 @@ export type IngestionSummary = {
   message: string;
 };
 
+type FeedRunStats = {
+  included: number;
+  possible: number;
+  excluded: number;
+  high: number;
+  medium: number;
+  low: number;
+  reasons: string[];
+};
+
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function feedConnectorOverride(feed: FeedLike) {
+  return {
+    name: feed.publicationName,
+    sourceType: (feed.sourceType as "trade" | "official_press" | "calendar" | "manual_csv" | "search_api" | "rss" | undefined) ?? "rss",
+    baseUrl: feed.baseUrl ?? "",
+    rssUrls: [feed.feedUrl],
+    enabled: feed.enabled,
+    reliabilityScore: feed.reliabilityScore ?? 0.7,
+    allowedCategories: String(feed.allowedCategories ?? "")
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean),
+    blockedKeywords: String(feed.blockedKeywords ?? "")
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean),
+    preferredKeywords: String(feed.preferredKeywords ?? "")
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean),
+    notes: feed.category
+  };
+}
+
+function topExclusionReasons(reasons: string[]) {
+  const counts = new Map<string, number>();
+  for (const reason of reasons) {
+    counts.set(reason, (counts.get(reason) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([reason, count]) => `${reason} (${count})`)
+    .join("; ");
+}
+
+async function fetchFeedXml(url: string) {
+  const delays = [300, 900];
+  let attempts = 0;
+
+  while (true) {
+    const response = await fetch(url, {
+      headers: {
+        "user-agent": "TV Market Intelligence Hub/0.1 (local RSS ingestion)",
+        accept: "application/rss+xml, application/xml, text/xml;q=0.9, */*;q=0.8"
+      },
+      cache: "no-store"
+    });
+
+    if (response.ok || response.status === 401 || response.status === 403 || response.status < 500 || attempts >= delays.length) {
+      return { response, attempts };
+    }
+
+    attempts += 1;
+    logOperationalEvent("warn", "RSS fetch retry scheduled.", { url, status: response.status, retryCount: attempts });
+    await sleep(delays[attempts - 1]);
+  }
 }
 
 function normalizeUrl(urlValue?: string | null) {
@@ -63,52 +126,56 @@ function normalizeUrl(urlValue?: string | null) {
   }
 }
 
-function isRelevantHeadline(headline: string) {
-  const normalized = headline.toLowerCase();
-  return RELEVANCE_KEYWORDS.some((keyword) => normalized.includes(keyword));
-}
-
-function inferCategory(headline: string) {
-  const normalized = headline.toLowerCase();
-  if (normalized.includes("pilot")) return "Pilot Order";
-  if (normalized.includes("renewal")) return "Renewal";
-  if (normalized.includes("cancellation")) return "Cancellation";
-  if (normalized.includes("cast")) return "Talent Attachment";
-  if (normalized.includes("lands at") || normalized.includes("sells to")) return "Sale";
-  if (normalized.includes("ordered") || normalized.includes("picked up")) return "Series Order";
-  if (normalized.includes("development")) return "Development";
-  if (normalized.includes("drama")) return "Drama";
-  if (normalized.includes("comedy")) return "Comedy";
-  return "General";
-}
-
 async function getConfiguredFeeds(): Promise<FeedLike[]> {
-  const dbFeeds = await prisma.rssFeed.findMany({
-    where: { enabled: true },
-    orderBy: { publicationName: "asc" }
+  const [dbFeeds, coverageRows] = await Promise.all([
+    prisma.rssFeed.findMany({
+      where: { enabled: true },
+      orderBy: { publicationName: "asc" }
+    }),
+    prisma.sourceCoverage.findMany().catch(() => [])
+  ]);
+
+  if (dbFeeds.length) {
+    return dbFeeds.map((feed) => {
+      const coverage = coverageRows.find((row) => row.sourceName === feed.publicationName);
+      const connector = getSourceConnector(feed.publicationName);
+      return {
+        publicationName: feed.publicationName,
+        feedUrl: feed.feedUrl,
+        category: feed.category,
+        enabled: feed.enabled,
+        baseUrl: coverage?.baseUrl ?? connector?.baseUrl ?? null,
+        reliabilityScore: coverage?.reliabilityScore ?? connector?.reliabilityScore ?? null,
+        allowedCategories: coverage?.allowedCategories ?? connector?.allowedCategories.join(", ") ?? null,
+        blockedKeywords: coverage?.blockedKeywords ?? connector?.blockedKeywords.join(", ") ?? null,
+        preferredKeywords: coverage?.preferredKeywords ?? connector?.preferredKeywords.join(", ") ?? null,
+        sourceType: coverage?.sourceType ?? connector?.sourceType ?? "rss"
+      };
+    });
+  }
+
+  return FEEDS.map((feed) => {
+    const connector = getSourceConnector(feed.name);
+    return {
+      publicationName: feed.name,
+      feedUrl: feed.url,
+      category: feed.category,
+      enabled: true,
+      baseUrl: connector?.baseUrl ?? null,
+      reliabilityScore: connector?.reliabilityScore ?? null,
+      allowedCategories: connector?.allowedCategories.join(", ") ?? null,
+      blockedKeywords: connector?.blockedKeywords.join(", ") ?? null,
+      preferredKeywords: connector?.preferredKeywords.join(", ") ?? null,
+      sourceType: connector?.sourceType ?? "rss"
+    };
   });
-
-  if (dbFeeds.length) return dbFeeds;
-
-  return FEEDS.map((feed) => ({
-    publicationName: feed.name,
-    feedUrl: feed.url,
-    category: feed.category,
-    enabled: true
-  }));
 }
 
 async function fetchFeedItems(feed: FeedLike) {
-  const response = await fetch(feed.feedUrl, {
-    headers: {
-      "user-agent": "TV Market Intelligence Hub/0.1 (local RSS ingestion)",
-      accept: "application/rss+xml, application/xml, text/xml;q=0.9, */*;q=0.8"
-    },
-    cache: "no-store"
-  });
+  const { response, attempts } = await fetchFeedXml(feed.feedUrl);
 
   if (!response.ok) {
-    throw new Error(`Feed request failed with ${response.status}`);
+    throw new Error(`Feed request failed with ${response.status}.${attempts ? ` Retries attempted: ${attempts}.` : ""}`);
   }
 
   const xml = await response.text();
@@ -129,6 +196,7 @@ export async function ingestRSSFeeds(mode: IngestionMode = "real"): Promise<Inge
     let fetched = 0;
     let saved = 0;
     let skipped = 0;
+    let relevant = 0;
 
     const previewState = await readMockPreviewState();
     const previewUrls = new Set(previewState.reviewArticles.map((article) => article.url));
@@ -136,20 +204,38 @@ export async function ingestRSSFeeds(mode: IngestionMode = "real"): Promise<Inge
     for (const feed of mockFeedEntries) {
       let feedFetched = 0;
       let feedSaved = 0;
+      const stats: FeedRunStats = { included: 0, possible: 0, excluded: 0, high: 0, medium: 0, low: 0, reasons: [] };
       for (const item of feed.items) {
         fetched += 1;
         feedFetched += 1;
-        if (!isRelevantHeadline(item.title)) continue;
+        const relevance = scoreArticleRelevance(
+          { headline: item.title, summary: item.summary, publication: feed.publication, url: item.url },
+          getSourceConnector(feed.publication)
+        );
+        relevant += relevance.decision === "excluded" ? 0 : 1;
+        stats[relevance.band] += 1;
+        if (relevance.decision === "excluded") {
+          skipped += 1;
+          stats.excluded += 1;
+          stats.reasons.push(relevance.primaryReason);
+          continue;
+        }
 
         const url = normalizeUrl(item.url);
         if (!url || previewUrls.has(url)) {
           skipped += 1;
+          stats.reasons.push("Duplicate URL");
           continue;
         }
 
         previewUrls.add(url);
         saved += 1;
         feedSaved += 1;
+        if (relevance.decision === "review_queue") {
+          stats.included += 1;
+        } else {
+          stats.possible += 1;
+        }
         articles.push({
           id: randomUUID(),
           headline: item.title,
@@ -157,6 +243,10 @@ export async function ingestRSSFeeds(mode: IngestionMode = "real"): Promise<Inge
           publishedDate: item.publishedAt ? new Date(item.publishedAt) : null,
           url,
           sourceType: "rss",
+          relevanceScore: relevance.score,
+          relevanceBand: relevance.band,
+          relevanceDecision: relevance.decision,
+          relevanceReasons: relevance.reasons.join(" | "),
           rawHtml: null,
           extractedText: null,
           extractedExcerpt: item.summary ? item.summary.slice(0, 280) : null,
@@ -167,8 +257,8 @@ export async function ingestRSSFeeds(mode: IngestionMode = "real"): Promise<Inge
           robotsAllowed: null,
           paywallLikely: false,
           sourceReliability: inferSourceReliability(feed.publication, url),
-          extractionStatus: "Needs Review",
-          suspectedCategory: inferCategory(item.title),
+          extractionStatus: relevance.decision === "possible_match" ? "Possible Match" : "Needs Review",
+          suspectedCategory: relevance.classification.replaceAll("_", " "),
           confidenceScore: 0.61,
           summary: item.summary,
           linkedProjectId: null,
@@ -192,13 +282,24 @@ export async function ingestRSSFeeds(mode: IngestionMode = "real"): Promise<Inge
       await upsertSourceCoverage({
         sourceName: feed.publication,
         sourceType: "rss",
+        baseUrl: getSourceConnector(feed.publication)?.baseUrl ?? null,
+        rssUrlsJson: [feed.feedUrl],
         enabled: true,
+        reliabilityScore: getSourceConnector(feed.publication)?.reliabilityScore ?? null,
+        allowedCategories: getSourceConnector(feed.publication)?.allowedCategories.join(", ") ?? null,
+        blockedKeywords: getSourceConnector(feed.publication)?.blockedKeywords.join(", ") ?? null,
+        preferredKeywords: getSourceConnector(feed.publication)?.preferredKeywords.join(", ") ?? null,
         checkedAt: new Date(),
         successAt: new Date(),
         articlesFetchedLastRun: feedFetched,
         articlesSavedLastRun: feedSaved,
+        articlesExcludedLastRun: stats.excluded,
+        highRelevanceCountLastRun: stats.high,
+        mediumRelevanceCountLastRun: stats.medium,
+        lowRelevanceCountLastRun: stats.low,
+        commonExclusionReasons: topExclusionReasons(stats.reasons),
         sourceReliability: inferSourceReliability(feed.publication, feed.items[0]?.url ?? null),
-        notes: "Mock RSS preview source."
+        notes: `Mock RSS preview source. Included ${stats.included}, possible ${stats.possible}, excluded ${stats.excluded}.`
       });
     }
 
@@ -224,6 +325,10 @@ export async function ingestRSSFeeds(mode: IngestionMode = "real"): Promise<Inge
             publication: article.publication,
             publishedDate: article.publishedDate,
             summary: article.summary,
+            relevanceScore: article.relevanceScore,
+            relevanceBand: article.relevanceBand,
+            relevanceReasons: article.relevanceReasons,
+            relevanceDecision: article.relevanceDecision,
             rawHtml: null,
             extractedText: null,
             extractedExcerpt: article.summary ? article.summary.slice(0, 280) : null,
@@ -236,7 +341,7 @@ export async function ingestRSSFeeds(mode: IngestionMode = "real"): Promise<Inge
             sourceReliability: inferSourceReliability(article.publication, article.url),
             sourceType: "rss",
             ingestionSource: "RSS",
-            extractionStatus: "Needs Review",
+            extractionStatus: article.extractionStatus,
             needsReview: true,
             suspectedCategory: article.suspectedCategory,
             confidenceScore: article.confidenceScore
@@ -292,7 +397,7 @@ export async function ingestRSSFeeds(mode: IngestionMode = "real"): Promise<Inge
         fetched,
         saved: dbSaved,
         skipped: skipped + dbSkipped,
-        relevant: articles.length + skipped,
+        relevant,
         runId: run.id,
         message: dbSaved ? "Mock ingestion completed and queued new articles for review." : "Mock ingestion completed with no new relevant articles."
       };
@@ -321,7 +426,7 @@ export async function ingestRSSFeeds(mode: IngestionMode = "real"): Promise<Inge
         fetched,
         saved,
         skipped,
-        relevant: articles.length + skipped,
+        relevant,
         message: saved ? "Mock ingestion completed in preview mode." : "Mock ingestion completed with no new relevant articles."
       };
     }
@@ -335,16 +440,29 @@ export async function ingestRSSFeeds(mode: IngestionMode = "real"): Promise<Inge
 
   for (const feed of feeds) {
     let feedSaved = 0;
+    const stats: FeedRunStats = { included: 0, possible: 0, excluded: 0, high: 0, medium: 0, low: 0, reasons: [] };
     const items = await fetchFeedItems(feed);
     fetched += items.length;
 
     for (const item of items) {
-      if (!item.url || !item.title || !isRelevantHeadline(item.title)) continue;
+      if (!item.url || !item.title) continue;
+      const relevance = scoreArticleRelevance(
+        { headline: item.title, summary: item.summary, publication: feed.publicationName, url: item.url },
+        feedConnectorOverride(feed)
+      );
+      stats[relevance.band] += 1;
+      if (relevance.decision === "excluded") {
+        skipped += 1;
+        stats.excluded += 1;
+        stats.reasons.push(relevance.primaryReason);
+        continue;
+      }
       relevant += 1;
 
       const existing = await prisma.article.findUnique({ where: { url: item.url }, select: { id: true } });
       if (existing) {
         skipped += 1;
+        stats.reasons.push("Duplicate URL");
         continue;
       }
 
@@ -355,6 +473,10 @@ export async function ingestRSSFeeds(mode: IngestionMode = "real"): Promise<Inge
           publication: feed.publicationName,
           publishedDate: item.publishedDate,
           summary: item.summary,
+          relevanceScore: relevance.score,
+          relevanceBand: relevance.band,
+          relevanceReasons: relevance.reasons.join(" | "),
+          relevanceDecision: relevance.decision,
           rawHtml: null,
           extractedText: null,
           extractedExcerpt: item.summary ? item.summary.slice(0, 280) : null,
@@ -367,9 +489,9 @@ export async function ingestRSSFeeds(mode: IngestionMode = "real"): Promise<Inge
           sourceReliability: inferSourceReliability(feed.publicationName, item.url),
           sourceType: "rss",
           ingestionSource: "RSS",
-          extractionStatus: "Needs Review",
+          extractionStatus: relevance.decision === "possible_match" ? "Possible Match" : "Needs Review",
           needsReview: true,
-          suspectedCategory: inferCategory(item.title),
+          suspectedCategory: relevance.classification.replaceAll("_", " "),
           confidenceScore: 0.6
         }
       });
@@ -401,6 +523,11 @@ export async function ingestRSSFeeds(mode: IngestionMode = "real"): Promise<Inge
 
       saved += 1;
       feedSaved += 1;
+      if (relevance.decision === "review_queue") {
+        stats.included += 1;
+      } else {
+        stats.possible += 1;
+      }
     }
 
     await prisma.rssFeed.updateMany({
@@ -409,14 +536,25 @@ export async function ingestRSSFeeds(mode: IngestionMode = "real"): Promise<Inge
     });
     await upsertSourceCoverage({
       sourceName: feed.publicationName,
-      sourceType: "rss",
+      sourceType: (feed.sourceType as "trade" | "official_press" | "calendar" | "manual_csv" | "search_api" | "rss" | undefined) ?? "rss",
+      baseUrl: feed.baseUrl ?? null,
+      rssUrlsJson: [feed.feedUrl],
       enabled: feed.enabled,
+      reliabilityScore: feed.reliabilityScore ?? null,
+      allowedCategories: feed.allowedCategories ?? null,
+      blockedKeywords: feed.blockedKeywords ?? null,
+      preferredKeywords: feed.preferredKeywords ?? null,
       checkedAt: new Date(),
       successAt: new Date(),
       articlesFetchedLastRun: items.length,
       articlesSavedLastRun: feedSaved,
+      articlesExcludedLastRun: stats.excluded,
+      highRelevanceCountLastRun: stats.high,
+      mediumRelevanceCountLastRun: stats.medium,
+      lowRelevanceCountLastRun: stats.low,
+      commonExclusionReasons: topExclusionReasons(stats.reasons),
       sourceReliability: inferSourceReliability(feed.publicationName, feed.feedUrl),
-      notes: feed.category
+      notes: `Included ${stats.included}, possible ${stats.possible}, excluded ${stats.excluded}.`
     });
 
     await sleep(400);
@@ -433,7 +571,7 @@ export async function ingestRSSFeeds(mode: IngestionMode = "real"): Promise<Inge
       itemsSkipped: skipped,
       startedAt,
       completedAt,
-      notes: `Relevant headlines matched simple keyword filter: ${relevant}.`
+      notes: `Saved ${saved} high-relevance articles, queued possible matches where warranted, skipped ${skipped} low-signal items.`
     }
   });
 

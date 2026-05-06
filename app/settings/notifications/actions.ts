@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { recordAuditLog } from "@/lib/audit";
 import { sendHighSeverityAlertDigest, sendScheduledWeeklyReport, sendTestEmailForCurrentUser, summarizeEmailRun } from "@/lib/email-jobs";
 import { upsertEmailPreference } from "@/lib/email-preferences";
+import { withControlledJob } from "@/lib/job-control";
 import { requireAdminCapabilityAccess, requireApprovedTeamAccess } from "@/lib/team-auth";
 
 function parseBool(value: FormDataEntryValue | null) {
@@ -46,18 +47,42 @@ export async function sendTestEmailAction() {
     redirect("/settings/notifications?error=missing_email");
   }
 
-  const result = await sendTestEmailForCurrentUser(email);
+  const result = await withControlledJob({
+    jobType: "email_send",
+    createdByUserId: auth.user?.id ?? null,
+    createdByEmail: auth.user?.email ?? null,
+    inputJson: { mode: "test", email },
+    lockKey: `email-test:${email}`,
+    dedupeMinutes: 2,
+    handler: async () => sendTestEmailForCurrentUser(email)
+  });
   redirect(`/settings/notifications?test=${result.simulated ? "preview" : "sent"}`);
 }
 
 export async function sendWeeklyReportNowAction() {
-  await requireAdminCapabilityAccess();
-  const run = await sendScheduledWeeklyReport();
+  const auth = await requireAdminCapabilityAccess();
+  const run = await withControlledJob({
+    jobType: "email_send",
+    createdByUserId: auth.user?.id ?? null,
+    createdByEmail: auth.user?.email ?? null,
+    inputJson: { mode: "weekly_report" },
+    lockKey: `weekly-report:${new Date().toISOString().slice(0, 10)}`,
+    dedupeMinutes: 60,
+    handler: async () => sendScheduledWeeklyReport()
+  });
   redirect(`/admin/status?weeklyEmail=${encodeURIComponent(summarizeEmailRun(run))}`);
 }
 
 export async function sendAlertDigestNowAction() {
-  await requireAdminCapabilityAccess();
-  const run = await sendHighSeverityAlertDigest();
+  const auth = await requireAdminCapabilityAccess();
+  const run = await withControlledJob({
+    jobType: "email_send",
+    createdByUserId: auth.user?.id ?? null,
+    createdByEmail: auth.user?.email ?? null,
+    inputJson: { mode: "alert_digest" },
+    lockKey: `alert-digest:${new Date().toISOString().slice(0, 13)}`,
+    dedupeMinutes: 30,
+    handler: async () => sendHighSeverityAlertDigest()
+  });
   redirect(`/admin/status?alertEmail=${encodeURIComponent(summarizeEmailRun(run))}`);
 }

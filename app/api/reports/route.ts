@@ -1,7 +1,10 @@
 import PDFDocument from "pdfkit";
 import { NextRequest } from "next/server";
 import { toCsv } from "@/lib/csv";
+import { withControlledJob } from "@/lib/job-control";
 import { prisma } from "@/lib/prisma";
+import { reportQuerySchema } from "@/lib/request-validation";
+import { requireApprovedTeamAccess } from "@/lib/team-auth";
 import { generateWeeklyReportPayload } from "@/lib/weekly-report";
 
 export const runtime = "nodejs";
@@ -45,10 +48,30 @@ function renderCsv(markdown: string) {
 }
 
 export async function GET(request: NextRequest) {
-  const id = request.nextUrl.searchParams.get("id");
-  const format = request.nextUrl.searchParams.get("format") ?? "md";
-  const reportDate = request.nextUrl.searchParams.get("reportDate");
-  const source = request.nextUrl.searchParams.get("source");
+  await requireApprovedTeamAccess();
+  const parsed = reportQuerySchema.safeParse({
+    id: request.nextUrl.searchParams.get("id") ?? undefined,
+    format: request.nextUrl.searchParams.get("format") ?? "md",
+    reportDate: request.nextUrl.searchParams.get("reportDate") ?? undefined,
+    source: request.nextUrl.searchParams.get("source") ?? undefined
+  });
+
+  if (!parsed.success) {
+    return new Response("Invalid report request.", { status: 400 });
+  }
+
+  const { id, format = "md", reportDate, source } = parsed.data;
+
+  if (reportDate) {
+    const parsedDate = new Date(reportDate);
+    if (Number.isNaN(parsedDate.getTime())) {
+      return new Response("Invalid report date.", { status: 400 });
+    }
+    const dayDelta = Math.abs((parsedDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+    if (dayDelta > 400) {
+      return new Response("Requested report date is outside the supported export window.", { status: 400 });
+    }
+  }
 
   let title: string;
   let markdown: string;
@@ -58,7 +81,13 @@ export async function GET(request: NextRequest) {
     title = report.title;
     markdown = report.generatedMarkdown;
   } else if (reportDate) {
-    const payload = await generateWeeklyReportPayload(reportDate, source === "mock");
+    const payload = await withControlledJob({
+      jobType: "report_generation",
+      inputJson: { reportDate, source: source ?? null, format },
+      lockKey: `report:${reportDate}:${source ?? "auto"}:${format}`,
+      dedupeMinutes: 2,
+      handler: async () => generateWeeklyReportPayload(reportDate, source === "mock")
+    });
     title = payload.title;
     markdown = payload.markdown;
   } else {

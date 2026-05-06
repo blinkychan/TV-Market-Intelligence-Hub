@@ -2,13 +2,31 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { mockBackfillJobs, type MockBackfillJob } from "@/lib/mock-backfill";
+import type { JobRunStatusValue } from "@/lib/job-control";
 import { mockReviewArticles, type MockReviewArticle } from "@/lib/mock-review";
 import { mockIngestionRuns, type MockIngestionRun } from "@/lib/mock-sources";
+
+export type MockJobRun = {
+  id: string;
+  jobType: string;
+  status: JobRunStatusValue;
+  startedAt: Date | null;
+  completedAt: Date | null;
+  createdByUserId: string | null;
+  createdByEmail: string | null;
+  inputJson: unknown;
+  resultJson: unknown;
+  errorMessage: string | null;
+  lockKey: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
 
 type MockPreviewState = {
   backfillJobs: MockBackfillJob[];
   reviewArticles: MockReviewArticle[];
   ingestionRuns: MockIngestionRun[];
+  jobRuns: MockJobRun[];
 };
 
 const storagePath = path.join(process.cwd(), "data", "mock-preview-state.json");
@@ -17,7 +35,8 @@ function baseState(): MockPreviewState {
   return {
     backfillJobs: [...mockBackfillJobs],
     reviewArticles: [...mockReviewArticles],
-    ingestionRuns: [...mockIngestionRuns]
+    ingestionRuns: [...mockIngestionRuns],
+    jobRuns: []
   };
 }
 
@@ -46,6 +65,10 @@ function reviveState(raw: MockPreviewState): MockPreviewState {
       robotsAllowed: article.robotsAllowed ?? null,
       paywallLikely: article.paywallLikely ?? false,
       sourceReliability: article.sourceReliability ?? null,
+      relevanceScore: article.relevanceScore ?? null,
+      relevanceBand: article.relevanceBand ?? null,
+      relevanceReasons: article.relevanceReasons ?? null,
+      relevanceDecision: article.relevanceDecision ?? null,
       extractionConfidence: article.extractionConfidence ?? article.confidenceScore ?? null,
       extractionSource: article.extractionSource ?? null,
       bodyAvailable: article.bodyAvailable ?? Boolean(article.extractedText),
@@ -65,6 +88,20 @@ function reviveState(raw: MockPreviewState): MockPreviewState {
       ...run,
       startedAt: new Date(run.startedAt),
       completedAt: run.completedAt ? new Date(run.completedAt) : null
+    })),
+    jobRuns: (raw.jobRuns ?? []).map((job) => ({
+      ...job,
+      status: job.status ?? "queued",
+      startedAt: job.startedAt ? new Date(job.startedAt) : null,
+      completedAt: job.completedAt ? new Date(job.completedAt) : null,
+      createdByUserId: job.createdByUserId ?? null,
+      createdByEmail: job.createdByEmail ?? null,
+      inputJson: job.inputJson ?? null,
+      resultJson: job.resultJson ?? null,
+      errorMessage: job.errorMessage ?? null,
+      lockKey: job.lockKey ?? null,
+      createdAt: new Date(job.createdAt),
+      updatedAt: new Date(job.updatedAt)
     }))
   };
 }
@@ -95,6 +132,7 @@ export async function appendMockIngestionResult(result: {
   }
 
   const nextState: MockPreviewState = {
+    ...current,
     backfillJobs: current.backfillJobs,
     reviewArticles: Array.from(reviewByUrl.values()).sort((a, b) => {
       const aDate = a.publishedDate ? new Date(a.publishedDate).getTime() : 0;
@@ -149,6 +187,17 @@ export async function saveMockBackfillJobs(backfillJobs: MockBackfillJob[]) {
   const nextState: MockPreviewState = {
     ...current,
     backfillJobs
+  };
+
+  await writeMockPreviewState(nextState);
+  return nextState;
+}
+
+export async function saveMockJobRuns(jobRuns: MockJobRun[]) {
+  const current = await readMockPreviewState();
+  const nextState: MockPreviewState = {
+    ...current,
+    jobRuns
   };
 
   await writeMockPreviewState(nextState);

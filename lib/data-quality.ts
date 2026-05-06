@@ -1,6 +1,12 @@
-import type { MissingDataSeverity, SourceCoverageType } from "@prisma/client";
+import { Prisma, type MissingDataSeverity, type SourceCoverageType } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { triggerMissingDataAlert } from "@/lib/watchlists";
+
+function toJsonValue(value: unknown): Prisma.InputJsonValue | Prisma.NullableJsonNullValueInput | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return Prisma.JsonNull;
+  return value as Prisma.InputJsonValue;
+}
 
 export type MissingDataInput = {
   entityType: "Article" | "Project" | "CurrentShow" | "Buyer" | "Company" | "Person";
@@ -227,11 +233,22 @@ export async function syncMissingDataFlags(flags: MissingDataInput[], entityType
 export async function upsertSourceCoverage(args: {
   sourceName: string;
   sourceType: SourceCoverageType;
+  baseUrl?: string | null;
+  rssUrlsJson?: unknown;
   enabled?: boolean;
+  reliabilityScore?: number | null;
+  allowedCategories?: string | null;
+  blockedKeywords?: string | null;
+  preferredKeywords?: string | null;
   checkedAt?: Date;
   successAt?: Date | null;
   articlesFetchedLastRun?: number;
   articlesSavedLastRun?: number;
+  articlesExcludedLastRun?: number;
+  highRelevanceCountLastRun?: number;
+  mediumRelevanceCountLastRun?: number;
+  lowRelevanceCountLastRun?: number;
+  commonExclusionReasons?: string | null;
   incrementFailures?: boolean;
   sourceReliability?: string | null;
   notes?: string | null;
@@ -254,11 +271,22 @@ export async function upsertSourceCoverage(args: {
         }
       },
       update: {
+        baseUrl: args.baseUrl ?? existing?.baseUrl ?? null,
+        rssUrlsJson: args.rssUrlsJson !== undefined ? toJsonValue(args.rssUrlsJson) : existing?.rssUrlsJson ?? undefined,
         enabled: args.enabled ?? existing?.enabled ?? true,
+        reliabilityScore: args.reliabilityScore ?? existing?.reliabilityScore ?? null,
+        allowedCategories: args.allowedCategories ?? existing?.allowedCategories ?? null,
+        blockedKeywords: args.blockedKeywords ?? existing?.blockedKeywords ?? null,
+        preferredKeywords: args.preferredKeywords ?? existing?.preferredKeywords ?? null,
         lastCheckedAt: args.checkedAt ?? existing?.lastCheckedAt ?? null,
         lastSuccessfulFetchAt: args.successAt ?? existing?.lastSuccessfulFetchAt ?? null,
         articlesFetchedLastRun: args.articlesFetchedLastRun ?? existing?.articlesFetchedLastRun ?? 0,
         articlesSavedLastRun: args.articlesSavedLastRun ?? existing?.articlesSavedLastRun ?? 0,
+        articlesExcludedLastRun: args.articlesExcludedLastRun ?? existing?.articlesExcludedLastRun ?? 0,
+        highRelevanceCountLastRun: args.highRelevanceCountLastRun ?? existing?.highRelevanceCountLastRun ?? 0,
+        mediumRelevanceCountLastRun: args.mediumRelevanceCountLastRun ?? existing?.mediumRelevanceCountLastRun ?? 0,
+        lowRelevanceCountLastRun: args.lowRelevanceCountLastRun ?? existing?.lowRelevanceCountLastRun ?? 0,
+        commonExclusionReasons: args.commonExclusionReasons ?? existing?.commonExclusionReasons ?? null,
         failuresLast7Days: args.incrementFailures ? (existing?.failuresLast7Days ?? 0) + 1 : existing?.failuresLast7Days ?? 0,
         sourceReliability: args.sourceReliability ?? existing?.sourceReliability ?? null,
         notes: args.notes ?? existing?.notes ?? null
@@ -266,11 +294,22 @@ export async function upsertSourceCoverage(args: {
       create: {
         sourceName: args.sourceName,
         sourceType: args.sourceType,
+        baseUrl: args.baseUrl ?? null,
+        rssUrlsJson: toJsonValue(args.rssUrlsJson),
         enabled: args.enabled ?? true,
+        reliabilityScore: args.reliabilityScore ?? null,
+        allowedCategories: args.allowedCategories ?? null,
+        blockedKeywords: args.blockedKeywords ?? null,
+        preferredKeywords: args.preferredKeywords ?? null,
         lastCheckedAt: args.checkedAt ?? null,
         lastSuccessfulFetchAt: args.successAt ?? null,
         articlesFetchedLastRun: args.articlesFetchedLastRun ?? 0,
         articlesSavedLastRun: args.articlesSavedLastRun ?? 0,
+        articlesExcludedLastRun: args.articlesExcludedLastRun ?? 0,
+        highRelevanceCountLastRun: args.highRelevanceCountLastRun ?? 0,
+        mediumRelevanceCountLastRun: args.mediumRelevanceCountLastRun ?? 0,
+        lowRelevanceCountLastRun: args.lowRelevanceCountLastRun ?? 0,
+        commonExclusionReasons: args.commonExclusionReasons ?? null,
         failuresLast7Days: args.incrementFailures ? 1 : 0,
         sourceReliability: args.sourceReliability ?? null,
         notes: args.notes ?? null

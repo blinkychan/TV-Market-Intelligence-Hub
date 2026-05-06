@@ -10,6 +10,7 @@ import {
   Radio,
   Settings,
   ShieldCheck,
+  Play,
   History,
   UsersRound,
   Eye
@@ -29,6 +30,7 @@ export const navItems = [
   { href: "/weekly-reports", label: "Weekly Reports", icon: CalendarDays },
   { href: "/sources", label: "Sources / Ingestion", icon: Settings },
   { href: "/admin/status", label: "Admin Status", icon: ShieldCheck },
+  { href: "/admin/jobs", label: "Admin Jobs", icon: Play },
   { href: "/admin/audit-log", label: "Admin Audit Log", icon: History }
 ];
 
