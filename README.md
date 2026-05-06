@@ -53,6 +53,8 @@ NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_ANON_KEY=
 ADMIN_PASSWORD=
 OPENAI_API_KEY=
+RESEND_API_KEY=
+REPORT_FROM_EMAIL=
 ```
 
 Replace `[YOUR-PASSWORD]` in the copied Supabase URLs.
@@ -136,6 +138,8 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=
 ADMIN_PASSWORD=
 NEXT_PUBLIC_APP_URL=
 OPENAI_API_KEY=
+RESEND_API_KEY=
+REPORT_FROM_EMAIL=
 ```
 
 Setup steps:
@@ -146,7 +150,8 @@ Setup steps:
 4. Replace `[YOUR-PASSWORD]` in both values.
 5. Add a shared `ADMIN_PASSWORD` for protected ingestion and admin controls.
 6. Set `NEXT_PUBLIC_APP_URL` to your Vercel production URL.
-7. Redeploy the project from the Vercel dashboard after saving environment variables.
+7. Add `RESEND_API_KEY` and `REPORT_FROM_EMAIL` if you want real email delivery.
+8. Redeploy the project from the Vercel dashboard after saving environment variables.
 
 ### Redeploy
 
@@ -162,6 +167,7 @@ npm run build
 - Vercel: project -> `Logs`
 - Supabase: project -> `Logs`
 - In-app: open `/admin/status` to confirm the latest RSS, backfill, and body extraction runs
+- Email sends stay visible through operational logs without exposing secrets
 
 ### Confirm Supabase Tables Are Connected
 
@@ -272,6 +278,36 @@ Testing flow:
 - use `Approve and Create Records` only after human review
 
 If only a headline is available, extraction stays low-confidence and remains in review.
+
+## Email Notifications
+
+Weekly reports and alert digests use:
+
+```env
+RESEND_API_KEY=
+REPORT_FROM_EMAIL=
+```
+
+If either value is missing:
+
+- email jobs stay in preview mode
+- test sends simulate delivery
+- cron/report jobs still run, but no real email is sent
+
+Where to manage it:
+
+- user preferences page: `/settings/notifications`
+- manual admin controls: `/admin/status`
+
+Scheduled delivery:
+
+- Vercel cron endpoint: `/api/cron/send-weekly-report`
+- current schedule in `vercel.json`: Friday send
+
+Important note for Vercel Hobby:
+
+- cron frequency and timing can be more limited than paid plans
+- the app is designed so manual sends from `/admin/status` still work when you need them
 
 ## Production QA Checklist
 

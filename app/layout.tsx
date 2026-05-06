@@ -7,7 +7,8 @@ import { isAdminSessionValid } from "@/lib/admin-auth";
 import { logoutTeamSession } from "@/app/login/actions";
 import { navItems } from "@/lib/constants";
 import { getCurrentUserContext } from "@/lib/team-auth";
-import { Search } from "lucide-react";
+import { getUnreadAlertCount } from "@/lib/watchlists";
+import { Bell, Search } from "lucide-react";
 
 export const metadata: Metadata = {
   title: "TV Market Intelligence Hub",
@@ -18,6 +19,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const pathname = (await headers()).get("x-pathname") ?? "/";
   const adminUnlocked = await isAdminSessionValid();
   const auth = await getCurrentUserContext();
+  const unreadAlerts = auth.isAuthenticated ? await getUnreadAlertCount().catch(() => 0) : 0;
   const isPublicRoute = pathname === "/login" || pathname === "/admin/login" || pathname === "/access-denied";
 
   if (!auth.isAuthenticated) {
@@ -105,6 +107,18 @@ export default async function RootLayout({ children }: { children: React.ReactNo
                   Search projects, buyers, companies, people, sources
                 </div>
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Link
+                    href="/alerts"
+                    className="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 font-medium text-slate-700 ring-1 ring-slate-200"
+                  >
+                    <Bell className="h-3.5 w-3.5" />
+                    Alerts
+                    {unreadAlerts ? (
+                      <span className="rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-semibold text-rose-700">
+                        {unreadAlerts}
+                      </span>
+                    ) : null}
+                  </Link>
                   {auth.user ? (
                     <span className="rounded-full bg-slate-100 px-3 py-1 font-medium text-slate-700 ring-1 ring-slate-200">
                       {auth.user.email}

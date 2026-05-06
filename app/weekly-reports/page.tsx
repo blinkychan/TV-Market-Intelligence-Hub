@@ -52,6 +52,9 @@ export default async function WeeklyReportsPage({
             <a className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground transition hover:bg-primary/90" href={`/api/reports?reportDate=${selectedDate}&source=${preview.dataSource}&format=md`}>
               <Download className="h-4 w-4" /> Markdown
             </a>
+            <a className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-secondary px-3 text-sm font-medium text-secondary-foreground transition hover:bg-secondary/80" href={`/api/reports?reportDate=${selectedDate}&source=${preview.dataSource}&format=csv`}>
+              <Download className="h-4 w-4" /> CSV
+            </a>
             <a className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-secondary px-3 text-sm font-medium text-secondary-foreground transition hover:bg-secondary/80" href={`/api/reports?reportDate=${selectedDate}&source=${preview.dataSource}&format=pdf`}>
               <Download className="h-4 w-4" /> PDF
             </a>
@@ -97,6 +100,9 @@ export default async function WeeklyReportsPage({
                 <div className="mt-3 flex flex-wrap gap-2">
                   <a className="inline-flex h-8 items-center justify-center gap-2 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground" href={`/api/reports?id=${report.id}&format=md`}>
                     <Download className="h-3.5 w-3.5" /> Markdown
+                  </a>
+                  <a className="inline-flex h-8 items-center justify-center gap-2 rounded-md bg-secondary px-3 text-xs font-medium text-secondary-foreground" href={`/api/reports?id=${report.id}&format=csv`}>
+                    <Download className="h-3.5 w-3.5" /> CSV
                   </a>
                   <a className="inline-flex h-8 items-center justify-center gap-2 rounded-md bg-secondary px-3 text-xs font-medium text-secondary-foreground" href={`/api/reports?id=${report.id}&format=pdf`}>
                     <Download className="h-3.5 w-3.5" /> PDF

@@ -27,6 +27,13 @@ import { ChangeHistoryPanel } from "@/components/audit/change-history";
 import { SavedViewRouterPanel } from "@/components/shared/saved-view-router-panel";
 import { TeamNotesPanel } from "@/components/shared/team-notes-panel";
 import type { AuditLogEntry } from "@/lib/audit";
+import {
+  calculateArticleConfidence,
+  confidenceTone,
+  getArticlePriorityScore,
+  isLowConfidenceHighImpact,
+  parseConfidenceReasons
+} from "@/lib/confidence";
 import { mockCurrentShows } from "@/lib/mock-current-tv";
 import { mockAuditLogs } from "@/lib/mock-audit";
 import { readMockPreviewState } from "@/lib/mock-preview-store";
@@ -41,7 +48,7 @@ import { cn, formatDate, humanize } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
-type SearchParams = Promise<{ articleId?: string; status?: string; q?: string }>;
+type SearchParams = Promise<{ articleId?: string; status?: string; q?: string; confidence?: string; missing?: string }>;
 
 type ReviewArticle = {
   id: string;
@@ -64,6 +71,11 @@ type ReviewArticle = {
   extractionMode?: string | null;
   suspectedCategory: string | null;
   confidenceScore: number | null;
+  extractionConfidence?: number | null;
+  extractionSource?: string | null;
+  bodyAvailable?: boolean | null;
+  confidenceLevel?: string | null;
+  confidenceReasons?: string | null;
   summary: string | null;
   linkedProjectId: string | null;
   linkedProjectTitle: string | null;
@@ -114,6 +126,41 @@ function parseList(value?: string | null) {
 function percentConfidence(value?: number | null) {
   if (value == null) return "Unscored";
   return `${Math.round(value * 100)}%`;
+}
+
+function deriveReviewConfidence(article: Pick<
+  ReviewArticle,
+  | "sourceReliability"
+  | "extractionSource"
+  | "bodyAvailable"
+  | "extractedText"
+  | "extractedExcerpt"
+  | "summary"
+  | "extractedProjectTitle"
+  | "extractedBuyer"
+  | "extractedStudio"
+  | "extractedCompanies"
+  | "extractedPeople"
+  | "extractedStatus"
+  | "extractedCountry"
+  | "extractedSourceMaterial"
+>) {
+  return calculateArticleConfidence({
+    sourceReliability: article.sourceReliability,
+    extractionSource: article.extractionSource,
+    bodyAvailable: article.bodyAvailable,
+    extractedText: article.extractedText,
+    extractedExcerpt: article.extractedExcerpt,
+    summary: article.summary,
+    title: article.extractedProjectTitle,
+    buyer: article.extractedBuyer,
+    studio: article.extractedStudio,
+    companies: article.extractedCompanies,
+    people: article.extractedPeople,
+    status: article.extractedStatus,
+    country: article.extractedCountry,
+    sourceMaterial: article.extractedSourceMaterial
+  });
 }
 
 function bodyFetchTone(status?: string | null) {
@@ -200,6 +247,9 @@ async function getReviewData() {
         extractionMode: article.extractionMode,
         suspectedCategory: article.suspectedCategory,
         confidenceScore: article.confidenceScore,
+        extractionConfidence: article.extractionConfidence,
+        extractionSource: article.extractionSource,
+        bodyAvailable: article.bodyAvailable,
         summary: article.summary,
         linkedProjectId: article.linkedProjectId,
         linkedProjectTitle: article.linkedProject?.title ?? null,
@@ -255,13 +305,53 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
   const params = await searchParams;
   const query = (params.q ?? "").trim().toLowerCase();
   const statusFilter = params.status ?? "All";
+  const confidenceFilter = params.confidence ?? "all";
+  const missingFilter = params.missing ?? "all";
   const { articles, dataSource, projects, currentShows, errorMessage } = await getReviewData();
   const auth = await getCurrentUserContext();
   const savedViews = await getSavedViewsForPage("articles").catch(() => []);
   const canEdit = auth.canEditContent || auth.adminUnlocked;
   const canAdminOps = auth.canManageIngestion || auth.adminUnlocked;
 
-  const filteredArticles = articles.filter((article) => {
+  const enrichedArticles = articles.map((article) => {
+    const confidence = deriveReviewConfidence({
+      sourceReliability: article.sourceReliability,
+      extractionSource:
+        article.extractionSource ??
+        (article.extractionMode === "ai"
+          ? "ai"
+          : article.extractedText?.trim()
+            ? "heuristic"
+            : article.extractedExcerpt?.trim() || article.summary?.trim()
+              ? "heuristic"
+              : "headline_only"),
+      bodyAvailable: article.bodyAvailable ?? Boolean(article.extractedText?.trim()),
+      extractedText: article.extractedText,
+      extractedExcerpt: article.extractedExcerpt,
+      summary: article.summary,
+      extractedProjectTitle: article.extractedProjectTitle,
+      extractedBuyer: article.extractedBuyer,
+      extractedStudio: article.extractedStudio,
+      extractedCompanies: article.extractedCompanies,
+      extractedPeople: article.extractedPeople,
+      extractedStatus: article.extractedStatus,
+      extractedCountry: article.extractedCountry,
+      extractedSourceMaterial: article.extractedSourceMaterial
+    });
+    return {
+      ...article,
+      confidenceScore: article.extractionConfidence ?? article.confidenceScore ?? confidence.score,
+      extractionConfidence: article.extractionConfidence ?? article.confidenceScore ?? confidence.score,
+      bodyAvailable: article.bodyAvailable ?? Boolean(article.extractedText?.trim()),
+      confidenceLevel: confidence.level,
+      confidenceReasons: parseConfidenceReasons(article.extractedFieldsNeedingReview)
+        .concat(confidence.reasons)
+        .filter((value, index, list) => value && list.indexOf(value) === index)
+        .join(", ")
+    };
+  });
+
+  const filteredArticles = enrichedArticles.filter((article) => {
     const matchesStatus = statusFilter === "All" || article.extractionStatus === statusFilter;
     const haystack = [
       article.headline,
@@ -276,7 +366,27 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
       .join(" ")
       .toLowerCase();
     const matchesQuery = !query || haystack.includes(query);
-    return matchesStatus && matchesQuery;
+    const matchesConfidence = confidenceFilter === "all" || article.confidenceLevel === confidenceFilter;
+    const matchesMissing =
+      missingFilter === "all" ||
+      (missingFilter === "body_text" && !article.extractedText?.trim()) ||
+      (missingFilter === "headline_only" && article.extractionSource === "headline_only") ||
+      (missingFilter === "buyer" && !article.extractedBuyer?.trim()) ||
+      (missingFilter === "studio" && !article.extractedStudio?.trim()) ||
+      (missingFilter === "low_confidence" && article.confidenceLevel === "low");
+    return matchesStatus && matchesQuery && matchesConfidence && matchesMissing;
+  }).sort((left, right) => {
+    const confidenceDelta = (left.extractionConfidence ?? left.confidenceScore ?? 1) - (right.extractionConfidence ?? right.confidenceScore ?? 1);
+    if (Math.abs(confidenceDelta) > 0.0001) return confidenceDelta;
+    return getArticlePriorityScore({
+      confidenceLevel: right.confidenceLevel,
+      status: right.extractedStatus,
+      category: right.suspectedCategory
+    }) - getArticlePriorityScore({
+      confidenceLevel: left.confidenceLevel,
+      status: left.extractedStatus,
+      category: left.suspectedCategory
+    });
   });
 
   const selectedArticle =
@@ -301,6 +411,17 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
   const queueCount = articles.filter((article) => article.extractionStatus === "Needs Review" || article.extractionStatus === "New").length;
   const approvedCount = articles.filter((article) => article.extractionStatus === "Approved").length;
   const duplicateCount = articles.filter((article) => article.extractionStatus === "Duplicate").length;
+  const exportParams = new URLSearchParams(
+    Object.fromEntries(
+      Object.entries({
+        pageType: "articles",
+        q: params.q ?? "",
+        status: statusFilter !== "All" ? statusFilter : "",
+        confidence: confidenceFilter !== "all" ? confidenceFilter : "",
+        missing: missingFilter !== "all" ? missingFilter : ""
+      }).filter(([, value]) => value)
+    )
+  ).toString();
 
   return (
     <div className="space-y-6">
@@ -348,7 +469,7 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
         pageType="articles"
         savedViews={savedViews}
         returnPath="/review"
-        currentState={{ filtersJson: { q: params.q ?? "", status: statusFilter } }}
+        currentState={{ filtersJson: { q: params.q ?? "", status: statusFilter, confidence: confidenceFilter, missing: missingFilter } }}
         canCreateTeamView={auth.canEditContent || auth.adminUnlocked}
         currentUserEmail={auth.user?.email ?? null}
         canManageAll={auth.canManageUsers || auth.adminUnlocked}
@@ -369,9 +490,29 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
                 </option>
               ))}
             </Select>
+            <Select name="confidence" defaultValue={confidenceFilter} className="lg:w-56">
+              <option value="all">All confidence</option>
+              <option value="high">High confidence</option>
+              <option value="medium">Medium confidence</option>
+              <option value="low">Low confidence</option>
+            </Select>
+            <Select name="missing" defaultValue={missingFilter} className="lg:w-56">
+              <option value="all">All missing-data flags</option>
+              <option value="body_text">Missing body text</option>
+              <option value="headline_only">Headline-only</option>
+              <option value="buyer">Missing buyer</option>
+              <option value="studio">Missing studio</option>
+              <option value="low_confidence">Low confidence</option>
+            </Select>
             <Button type="submit">Apply Filters</Button>
           </form>
           <div className="flex flex-wrap gap-2">
+            <Link
+              href={`/api/export?${exportParams}`}
+              className="inline-flex h-9 items-center rounded-md bg-secondary px-3 text-sm font-medium text-secondary-foreground transition hover:bg-secondary/80"
+            >
+              <CopyMinus className="mr-2 h-4 w-4" /> Export CSV
+            </Link>
             <form action={fetchBodiesForNeedsReview}>
               <Button type="submit" variant="secondary" disabled={!canAdminOps}>
                 <FileText className="h-4 w-4" /> Fetch Bodies for Needs Review
@@ -387,8 +528,25 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
           <div className="flex flex-wrap gap-2">
             {statusOptions.map((status) => {
               const href = status === "All"
-                ? `/review${params.q ? `?q=${encodeURIComponent(params.q)}` : ""}`
-                : `/review?status=${encodeURIComponent(status)}${params.q ? `&q=${encodeURIComponent(params.q)}` : ""}`;
+                ? `/review?${new URLSearchParams(
+                    Object.fromEntries(
+                      Object.entries({
+                        q: params.q ?? "",
+                        confidence: confidenceFilter !== "all" ? confidenceFilter : "",
+                        missing: missingFilter !== "all" ? missingFilter : ""
+                      }).filter(([, value]) => value)
+                    )
+                  ).toString()}`
+                : `/review?${new URLSearchParams(
+                    Object.fromEntries(
+                      Object.entries({
+                        status,
+                        q: params.q ?? "",
+                        confidence: confidenceFilter !== "all" ? confidenceFilter : "",
+                        missing: missingFilter !== "all" ? missingFilter : ""
+                      }).filter(([, value]) => value)
+                    )
+                  ).toString()}`;
               return (
                 <Link
                   key={status}
@@ -434,9 +592,30 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
                   </thead>
                   <tbody>
                     {filteredArticles.map((article) => {
-                      const rowHref = `/review?articleId=${article.id}${statusFilter !== "All" ? `&status=${encodeURIComponent(statusFilter)}` : ""}${params.q ? `&q=${encodeURIComponent(params.q)}` : ""}`;
+                      const rowHref = `/review?${new URLSearchParams(
+                        Object.fromEntries(
+                          Object.entries({
+                            articleId: article.id,
+                            status: statusFilter !== "All" ? statusFilter : "",
+                            q: params.q ?? "",
+                            confidence: confidenceFilter !== "all" ? confidenceFilter : "",
+                            missing: missingFilter !== "all" ? missingFilter : ""
+                          }).filter(([, value]) => value)
+                        )
+                      ).toString()}`;
+                      const urgentLowConfidence = isLowConfidenceHighImpact({
+                        confidenceLevel: article.confidenceLevel,
+                        status: article.extractedStatus,
+                        category: article.suspectedCategory
+                      });
                       return (
-                        <tr key={article.id} className={cn(selectedArticle?.id === article.id && "bg-slate-50")}>
+                        <tr
+                          key={article.id}
+                          className={cn(
+                            selectedArticle?.id === article.id && "bg-slate-50",
+                            urgentLowConfidence && "bg-rose-50/60"
+                          )}
+                        >
                           <Td>
                             <input type="checkbox" name="articleIds" value={article.id} form="review-bulk-body-fetch" />
                           </Td>
@@ -465,7 +644,14 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
                           </Td>
                           <Td>{article.suspectedCategory ?? "Unclassified"}</Td>
                           <Td>{article.linkedProjectTitle ?? article.linkedShowTitle ?? "Unlinked"}</Td>
-                          <Td>{percentConfidence(article.confidenceScore)}</Td>
+                          <Td>
+                            <div className="space-y-1">
+                              <Badge className={confidenceTone(article.confidenceLevel)}>
+                                {humanize(article.confidenceLevel ?? "low")} · {percentConfidence(article.confidenceScore)}
+                              </Badge>
+                              {urgentLowConfidence ? <div className="text-xs text-rose-700">Low confidence + high impact</div> : null}
+                            </div>
+                          </Td>
                         </tr>
                       );
                     })}
@@ -501,11 +687,20 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge className={extractionTone(selectedArticle.extractionStatus)}>{selectedArticle.extractionStatus}</Badge>
                     <Badge className="bg-slate-100 text-slate-700 ring-slate-200">{selectedArticle.suspectedCategory ?? "Unclassified"}</Badge>
-                    <Badge className="bg-slate-100 text-slate-700 ring-slate-200">Confidence {percentConfidence(selectedArticle.confidenceScore)}</Badge>
+                    <Badge className={confidenceTone(selectedArticle.confidenceLevel)}>
+                      {humanize(selectedArticle.confidenceLevel ?? "low")} confidence · {percentConfidence(selectedArticle.confidenceScore)}
+                    </Badge>
                     <Badge className={bodyFetchTone(selectedArticle.bodyFetchStatus)}>{humanize(selectedArticle.bodyFetchStatus ?? "not_fetched")}</Badge>
                     <Badge className={sourceReliabilityTone(selectedArticle.sourceReliability)}>{humanize(selectedArticle.sourceReliability ?? "low")} reliability</Badge>
                     {selectedArticle.extractionMode ? (
                       <Badge className="bg-slate-100 text-slate-700 ring-slate-200">Extraction {humanize(selectedArticle.extractionMode)}</Badge>
+                    ) : null}
+                    {isLowConfidenceHighImpact({
+                      confidenceLevel: selectedArticle.confidenceLevel,
+                      status: selectedArticle.extractedStatus,
+                      category: selectedArticle.suspectedCategory
+                    }) ? (
+                      <Badge className="bg-rose-50 text-rose-700 ring-rose-200">Low confidence + high impact</Badge>
                     ) : null}
                   </div>
                   <h2 className="text-xl font-semibold tracking-tight">{selectedArticle.headline}</h2>
@@ -634,6 +829,12 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
                       <div>
                         <div className="text-muted-foreground">Fields Needing Review</div>
                         <p className="mt-1 leading-6 text-slate-700">{selectedArticle.extractedFieldsNeedingReview ?? "No flagged fields."}</p>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">Confidence Reasons</div>
+                        <p className="mt-1 leading-6 text-slate-700">
+                          {parseConfidenceReasons(selectedArticle.confidenceReasons).join(", ") || "No confidence notes yet."}
+                        </p>
                       </div>
                       <div>
                         <div className="text-muted-foreground">Stored AI Extraction JSON</div>

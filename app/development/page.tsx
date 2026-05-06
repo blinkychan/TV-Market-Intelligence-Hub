@@ -1,5 +1,6 @@
 import { DevelopmentTable } from "@/components/tables/development-table";
 import type { DevelopmentRow } from "@/components/tables/development-table";
+import { calculateProjectConfidence, joinConfidenceReasons } from "@/lib/confidence";
 import { mockBuyerDetails } from "@/lib/mock-buyers";
 import { prisma } from "@/lib/prisma";
 import { getSavedViewsForPage } from "@/lib/saved-views";
@@ -32,6 +33,8 @@ function getMockRows(): DevelopmentRow[] {
       sourceUrl: project.sourceUrl,
       sourcePublication: null,
       confidenceScore: 0.75,
+      confidenceLevel: "medium",
+      confidenceReasons: "Mock preview data",
       needsReview: project.status === "stale",
       notes: project.notes
     }))
@@ -46,6 +49,29 @@ async function getDevelopmentRows(): Promise<DevelopmentRow[]> {
     });
 
     return projects.map((project) => ({
+      ...(() => {
+        const confidence = calculateProjectConfidence({
+          sourceReliability: project.sourcePublication ? "medium" : "low",
+          bodyAvailable: true,
+          title: project.title,
+          buyer: project.buyer?.name ?? project.networkOrPlatform ?? null,
+          studio: project.studio?.name ?? null,
+          genre: project.genre,
+          status: project.status,
+          country: project.countryOfOrigin,
+          announcementDate: project.announcementDate,
+          logline: project.logline,
+          sourceUrl: project.sourceUrl,
+          productionCompanies: project.productionCompanies.map((company) => company.name),
+          people: project.people.map((person) => person.name),
+          needsReview: project.needsReview
+        });
+        return {
+          confidenceScore: project.confidenceScore ?? confidence.score,
+          confidenceLevel: project.confidenceLevel ?? confidence.level,
+          confidenceReasons: project.confidenceReasons ?? joinConfidenceReasons(confidence.reasons)
+        };
+      })(),
       id: project.id,
       title: project.title,
       type: project.type,
@@ -67,7 +93,6 @@ async function getDevelopmentRows(): Promise<DevelopmentRow[]> {
       lastUpdateDate: project.lastUpdateDate?.toISOString() ?? null,
       sourceUrl: project.sourceUrl,
       sourcePublication: project.sourcePublication,
-      confidenceScore: project.confidenceScore,
       needsReview: project.needsReview,
       notes: project.notes
     }));
@@ -76,7 +101,12 @@ async function getDevelopmentRows(): Promise<DevelopmentRow[]> {
   }
 }
 
-export default async function DevelopmentPage() {
+export default async function DevelopmentPage({
+  searchParams
+}: {
+  searchParams: Promise<Record<string, string | undefined>>;
+}) {
+  const params = await searchParams;
   const rows = await getDevelopmentRows();
   const auth = await getCurrentUserContext();
   const savedViews = await getSavedViewsForPage("development_tracker").catch(() => []);
@@ -97,6 +127,23 @@ export default async function DevelopmentPage() {
         canCreateTeamView={auth.canEditContent || auth.adminUnlocked}
         canManageAllSavedViews={auth.canManageUsers || auth.adminUnlocked}
         canWriteSavedViews
+        canBulkEdit={auth.canEditContent || auth.adminUnlocked}
+        canArchive={auth.canManageUsers || auth.adminUnlocked}
+        initialFilters={{
+          savedView: params.savedView,
+          globalFilter: params.q,
+          status: params.status,
+          buyer: params.buyer,
+          studio: params.studio,
+          genre: params.genre,
+          year: params.year,
+          country: params.country,
+          acquisition: params.acquisition,
+          coProduction: params.coProduction,
+          international: params.international,
+          needsReview: params.needsReview,
+          confidence: params.confidence
+        }}
       />
     </div>
   );

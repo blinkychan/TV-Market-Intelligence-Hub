@@ -2,8 +2,10 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import { Download } from "lucide-react";
 import { SavedViewsPanel } from "@/components/shared/saved-views-panel";
 import { Badge } from "@/components/ui/badge";
+import { ButtonLink } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Select } from "@/components/ui/input";
 import type { SavedViewRecord } from "@/lib/saved-views";
@@ -40,6 +42,11 @@ export function RelationshipIndex({
   }
 
   const activeSavedViews = tab === "people" ? peopleSavedViews : companySavedViews;
+  const exportHref = useMemo(() => {
+    const params = new URLSearchParams({ pageType: tab === "people" ? "people" : "companies", tab, query });
+    if (!query) params.delete("query");
+    return `/api/export?${params.toString()}`;
+  }, [tab, query]);
 
   return (
     <div className="space-y-5">
@@ -70,9 +77,16 @@ export function RelationshipIndex({
             </button>
           ))}
         </div>
-        <Badge className={dataSource === "database" ? "bg-emerald-50 text-emerald-700 ring-emerald-200" : "bg-amber-50 text-amber-800 ring-amber-200"}>
-          Data Source: {dataSource === "database" ? "Database" : "Mock Preview Data"}
-        </Badge>
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge className={dataSource === "database" ? "bg-emerald-50 text-emerald-700 ring-emerald-200" : "bg-amber-50 text-amber-800 ring-amber-200"}>
+            Data Source: {dataSource === "database" ? "Database" : "Mock Preview Data"}
+          </Badge>
+          {tab !== "map" ? (
+            <ButtonLink href={exportHref} variant="secondary">
+              <Download className="h-4 w-4" /> Export CSV
+            </ButtonLink>
+          ) : null}
+        </div>
       </div>
       {errorMessage ? <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">Database unavailable, showing mock preview data. Detail: {errorMessage}</div> : null}
       <div className="rounded-lg border bg-white p-4 shadow-panel">

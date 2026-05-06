@@ -4,6 +4,19 @@ import { revalidatePath } from "next/cache";
 import { BuyerType, CompanyType, PersonRole, ProjectStatus, ProjectType } from "@prisma/client";
 import { fetchArticleBody } from "@/lib/article-body";
 import { recordAuditLog } from "@/lib/audit";
+import {
+  calculateArticleConfidence,
+  calculateCurrentShowConfidence,
+  calculateProjectConfidence,
+  deriveArticleExtractionSource,
+  joinConfidenceReasons
+} from "@/lib/confidence";
+import {
+  detectArticleMissingData,
+  detectCurrentShowMissingData,
+  detectProjectMissingData,
+  syncMissingDataFlags
+} from "@/lib/data-quality";
 import { findBestDuplicateWarning, type DuplicateGroupRecord } from "@/lib/deduplication";
 import { extractStructuredTVData, extractStructuredTVDataWithAI, type StructuredTVExtraction } from "@/lib/extraction";
 import { readMockPreviewState, updateMockReviewArticle } from "@/lib/mock-preview-store";
@@ -11,6 +24,11 @@ import { logOperationalEvent } from "@/lib/ops-log";
 import { prisma } from "@/lib/prisma";
 import { inferSourceReliability } from "@/lib/source-reliability";
 import { requireAdminCapabilityAccess, requireEditorActionAccess } from "@/lib/team-auth";
+import {
+  triggerDuplicateDetectedAlert,
+  triggerLowConfidenceAlert,
+  triggerWatchlistAlertsForEntity
+} from "@/lib/watchlists";
 
 function parseDate(value: FormDataEntryValue | null) {
   const stringValue = String(value ?? "").trim();
@@ -138,6 +156,9 @@ function mapArticleData(extraction: StructuredTVExtraction) {
     extractionMode: extraction.mode,
     suspectedCategory: extraction.category.replaceAll("_", " "),
     confidenceScore: extraction.confidenceScore,
+    extractionConfidence: extraction.confidenceScore,
+    extractionSource: extraction.extractionSource,
+    bodyAvailable: extraction.bodyAvailable,
     extractedProjectTitle: extraction.title,
     extractedFormat: extraction.format,
     extractedGenre: extraction.genre,
@@ -158,6 +179,163 @@ function mapArticleData(extraction: StructuredTVExtraction) {
     extractedFieldsNeedingReview: fieldsNeedingReview.join(", "),
     extractedDeduplicationNotes: extraction.dedupeReason
   };
+}
+
+function buildArticleConfidenceData(article: {
+  sourceReliability?: string | null;
+  extractionMode?: string | null;
+  extractionMethod?: string | null;
+  extractedFieldsNeedingReview?: string | null;
+  extractedText?: string | null;
+  extractedExcerpt?: string | null;
+  summary?: string | null;
+  extractedProjectTitle?: string | null;
+  extractedBuyer?: string | null;
+  extractedStudio?: string | null;
+  extractedCompanies?: string | null;
+  extractedPeople?: string | null;
+  extractedStatus?: string | null;
+  extractedCountry?: string | null;
+  extractedSourceMaterial?: string | null;
+}, args?: { manual?: boolean }) {
+  const extractionBasis = article.extractedText?.trim()
+    ? "body"
+    : article.extractedExcerpt?.trim()
+      ? "excerpt"
+      : article.summary?.trim()
+        ? "summary"
+        : "headline";
+  const extractionSource = deriveArticleExtractionSource({
+    mode: article.extractionMode,
+    extractionBasis,
+    manual: args?.manual
+  });
+  const confidence = calculateArticleConfidence({
+    sourceReliability: article.sourceReliability,
+    extractionSource,
+    bodyAvailable: Boolean(article.extractedText?.trim()),
+    extractedText: article.extractedText,
+    extractedExcerpt: article.extractedExcerpt,
+    summary: article.summary,
+    title: article.extractedProjectTitle,
+    buyer: article.extractedBuyer,
+    studio: article.extractedStudio,
+    companies: article.extractedCompanies,
+    people: article.extractedPeople,
+    status: article.extractedStatus,
+    country: article.extractedCountry,
+    sourceMaterial: article.extractedSourceMaterial,
+    humanEdited: args?.manual
+  });
+
+  return {
+    confidenceScore: confidence.score,
+    extractionConfidence: confidence.score,
+    extractionSource,
+    bodyAvailable: Boolean(article.extractedText?.trim()),
+    extractedFieldsNeedingReview: joinConfidenceReasons(
+      Array.from(
+        new Set([
+          ...parseCsv(article.extractedFieldsNeedingReview ?? null),
+          ...confidence.reasons.filter(
+            (reason) =>
+              reason.startsWith("Missing key data") ||
+              reason === "Headline-only extraction" ||
+              reason === "Unverified source"
+          )
+        ])
+      )
+    )
+  };
+}
+
+function getProjectConfidencePayload(args: {
+  sourceReliability?: string | null;
+  bodyAvailable?: boolean | null;
+  title?: string | null;
+  buyer?: string | null;
+  studio?: string | null;
+  genre?: string | null;
+  status?: string | null;
+  country?: string | null;
+  announcementDate?: Date | null;
+  logline?: string | null;
+  sourceUrl?: string | null;
+  productionCompanies?: string[];
+  people?: string[];
+  needsReview?: boolean;
+  humanEdited?: boolean;
+}) {
+  const confidence = calculateProjectConfidence(args);
+  return {
+    confidenceScore: confidence.score,
+    confidenceLevel: confidence.level,
+    confidenceReasons: joinConfidenceReasons(confidence.reasons)
+  };
+}
+
+function getCurrentShowConfidencePayload(args: {
+  sourceReliability?: string | null;
+  title?: string | null;
+  networkOrPlatform?: string | null;
+  premiereDate?: Date | null;
+  finaleDate?: Date | null;
+  studio?: string | null;
+  productionCompanies?: string | null;
+  genre?: string | null;
+  country?: string | null;
+  sourceUrl?: string | null;
+  verifiedAt?: Date | null;
+  needsVerification?: boolean | null;
+  notes?: string | null;
+  humanEdited?: boolean;
+}) {
+  const confidence = calculateCurrentShowConfidence(args);
+  return {
+    confidenceScore: confidence.score,
+    confidenceLevel: confidence.level,
+    confidenceReasons: joinConfidenceReasons(confidence.reasons)
+  };
+}
+
+async function syncArticleMissingDataFromRecord(article: {
+  id: string;
+  url?: string | null;
+  extractedText?: string | null;
+  extractedExcerpt?: string | null;
+  extractedBuyer?: string | null;
+  extractedStudio?: string | null;
+  extractionSource?: string | null;
+  extractionConfidence?: number | null;
+  confidenceScore?: number | null;
+}) {
+  await syncMissingDataFlags(
+    detectArticleMissingData(article),
+    "Article",
+    article.id
+  );
+}
+
+async function syncProjectMissingDataFromRecord(project: {
+  id: string;
+  buyerId?: string | null;
+  networkOrPlatform?: string | null;
+  studioId?: string | null;
+  sourceUrl?: string | null;
+  confidenceLevel?: string | null;
+  productionCompanies?: Array<unknown>;
+}) {
+  await syncMissingDataFlags(detectProjectMissingData(project), "Project", project.id);
+}
+
+async function syncCurrentShowMissingDataFromRecord(show: {
+  id: string;
+  premiereDate?: Date | null;
+  sourceUrl?: string | null;
+  confidenceLevel?: string | null;
+  productionCompanies?: string | null;
+}) {
+  await syncMissingDataFlags(detectCurrentShowMissingData(show), "CurrentShow", show.id);
 }
 
 function hasExistingExtractedFields(article: {
@@ -516,6 +694,7 @@ export async function updateArticleStatus(formData: FormData) {
           : article.extractedDeduplicationNotes
     }));
   } else {
+    await syncArticleMissingDataFromRecord(updated);
     await recordAuditLog({
       entityType: "Article",
       entityId: updated.id,
@@ -552,6 +731,22 @@ export async function extractArticleData(formData: FormData) {
       where: { id: article.id },
       data: {
         ...mapArticleData(extraction),
+        ...buildArticleConfidenceData({
+          sourceReliability: article.sourceReliability ?? inferSourceReliability(article.publication, article.url),
+          extractionMode: extraction.mode,
+          extractedText: article.extractedText,
+          extractedExcerpt: article.extractedExcerpt,
+          summary: article.summary,
+          extractedProjectTitle: extraction.title,
+          extractedBuyer: extraction.buyer,
+          extractedStudio: extraction.studio,
+          extractedCompanies: extraction.productionCompanies.join(", "),
+          extractedPeople: extraction.people.join(", "),
+          extractedStatus: extraction.status,
+          extractedCountry: extraction.country,
+          extractedSourceMaterial: extraction.sourceMaterial,
+          extractedFieldsNeedingReview: extraction.fieldsNeedingReview.join(", ")
+        }),
         extractionStatus: duplicate ? "Duplicate" : "Needs Review",
         needsReview: true,
         sourceReliability: article.sourceReliability ?? inferSourceReliability(article.publication, article.url),
@@ -561,6 +756,7 @@ export async function extractArticleData(formData: FormData) {
       }
     }).catch(() => null);
     if (updated) {
+      await syncArticleMissingDataFromRecord(updated);
       await recordAuditLog({
         entityType: "Article",
         entityId: updated.id,
@@ -577,6 +773,22 @@ export async function extractArticleData(formData: FormData) {
       return {
         ...existing,
         ...mapArticleData(extraction),
+        ...buildArticleConfidenceData({
+          sourceReliability: existing.sourceReliability ?? inferSourceReliability(existing.publication, existing.url),
+          extractionMode: extraction.mode,
+          extractedText: existing.extractedText,
+          extractedExcerpt: existing.extractedExcerpt,
+          summary: existing.summary,
+          extractedProjectTitle: extraction.title,
+          extractedBuyer: extraction.buyer,
+          extractedStudio: extraction.studio,
+          extractedCompanies: extraction.productionCompanies.join(", "),
+          extractedPeople: extraction.people.join(", "),
+          extractedStatus: extraction.status,
+          extractedCountry: extraction.country,
+          extractedSourceMaterial: extraction.sourceMaterial,
+          extractedFieldsNeedingReview: extraction.fieldsNeedingReview.join(", ")
+        }),
         extractionStatus: extraction.dedupeCandidate ? "Duplicate" : "Needs Review",
         sourceReliability: existing.sourceReliability ?? inferSourceReliability(existing.publication, existing.url)
       };
@@ -613,11 +825,26 @@ async function persistAiExtraction(articleId: string, confirmOverwrite: boolean)
           ...(shouldPreserveExisting
             ? {
                 extractionMode: extraction.mode,
-                confidenceScore: extraction.confidenceScore,
                 suspectedCategory: extraction.category.replaceAll("_", " "),
                 extractedStructuredDataJson: extractionSnapshot,
                 aiExtractionError: null,
                 sourceReliability: article.sourceReliability ?? inferSourceReliability(article.publication, article.url),
+                ...buildArticleConfidenceData({
+                  sourceReliability: article.sourceReliability ?? inferSourceReliability(article.publication, article.url),
+                  extractionMode: extraction.mode,
+                  extractedText: article.extractedText,
+                  extractedExcerpt: article.extractedExcerpt,
+                  summary: article.summary,
+                  extractedProjectTitle: article.extractedProjectTitle,
+                  extractedBuyer: article.extractedBuyer,
+                  extractedStudio: article.extractedStudio,
+                  extractedCompanies: article.extractedCompanies,
+                  extractedPeople: article.extractedPeople,
+                  extractedStatus: article.extractedStatus,
+                  extractedCountry: article.extractedCountry,
+                  extractedSourceMaterial: article.extractedSourceMaterial,
+                  extractedFieldsNeedingReview: article.extractedFieldsNeedingReview
+                }),
                 extractionStatus: duplicate ? "Duplicate" : "Needs Review",
                 needsReview: true,
                 extractedFieldsNeedingReview: preserveExistingFieldNote(article.extractedFieldsNeedingReview),
@@ -630,10 +857,45 @@ async function persistAiExtraction(articleId: string, confirmOverwrite: boolean)
                 extractionStatus: duplicate ? "Duplicate" : "Needs Review",
                 needsReview: true,
                 sourceReliability: article.sourceReliability ?? inferSourceReliability(article.publication, article.url),
+                ...buildArticleConfidenceData({
+                  sourceReliability: article.sourceReliability ?? inferSourceReliability(article.publication, article.url),
+                  extractionMode: extraction.mode,
+                  extractedText: article.extractedText,
+                  extractedExcerpt: article.extractedExcerpt,
+                  summary: article.summary,
+                  extractedProjectTitle: extraction.title,
+                  extractedBuyer: extraction.buyer,
+                  extractedStudio: extraction.studio,
+                  extractedCompanies: extraction.productionCompanies.join(", "),
+                  extractedPeople: extraction.people.join(", "),
+                  extractedStatus: extraction.status,
+                  extractedCountry: extraction.country,
+                  extractedSourceMaterial: extraction.sourceMaterial,
+                  extractedFieldsNeedingReview: extraction.fieldsNeedingReview.join(", ")
+                }),
                 extractedDeduplicationNotes: duplicateNote
               })
         }
       });
+      await syncArticleMissingDataFromRecord(updated);
+      await triggerLowConfidenceAlert({
+        entityType: "Article",
+        entityId: updated.id,
+        label: updated.headline,
+        confidenceLevel: updated.extractionConfidence != null && updated.extractionConfidence < 0.55 ? "low" : "medium",
+        impact:
+          updated.extractedStatus === "series_order" || updated.extractedStatus === "pilot_order" || updated.extractedStatus === "sold"
+            ? "high"
+            : "medium"
+      });
+      if (duplicate) {
+        await triggerDuplicateDetectedAlert({
+          entityType: "Article",
+          entityId: updated.id,
+          label: updated.headline,
+          details: duplicateNote ?? undefined
+        });
+      }
       await recordAuditLog({
         entityType: "Article",
         entityId: updated.id,
@@ -651,10 +913,27 @@ async function persistAiExtraction(articleId: string, confirmOverwrite: boolean)
         data: {
           aiExtractionError: message,
           needsReview: true,
+          ...buildArticleConfidenceData({
+            sourceReliability: article.sourceReliability ?? inferSourceReliability(article.publication, article.url),
+            extractionMode: article.extractionMode,
+            extractedText: article.extractedText,
+            extractedExcerpt: article.extractedExcerpt,
+            summary: article.summary,
+            extractedProjectTitle: article.extractedProjectTitle,
+            extractedBuyer: article.extractedBuyer,
+            extractedStudio: article.extractedStudio,
+            extractedCompanies: article.extractedCompanies,
+            extractedPeople: article.extractedPeople,
+            extractedStatus: article.extractedStatus,
+            extractedCountry: article.extractedCountry,
+            extractedSourceMaterial: article.extractedSourceMaterial,
+            extractedFieldsNeedingReview: preserveExistingFieldNote(article.extractedFieldsNeedingReview)
+          }),
           extractedFieldsNeedingReview: preserveExistingFieldNote(article.extractedFieldsNeedingReview)
         }
       }).catch(() => null);
       if (failed) {
+        await syncArticleMissingDataFromRecord(failed);
         await recordAuditLog({
           entityType: "Article",
           entityId: failed.id,
@@ -682,10 +961,25 @@ async function persistAiExtraction(articleId: string, confirmOverwrite: boolean)
         ...(shouldPreserveExisting
           ? {
               extractionMode: extraction.mode,
-              confidenceScore: extraction.confidenceScore,
               suspectedCategory: extraction.category.replaceAll("_", " "),
               extractedStructuredDataJson: extractionSnapshot,
               aiExtractionError: null,
+              ...buildArticleConfidenceData({
+                sourceReliability: existing.sourceReliability ?? inferSourceReliability(existing.publication, existing.url),
+                extractionMode: extraction.mode,
+                extractedText: existing.extractedText,
+                extractedExcerpt: existing.extractedExcerpt,
+                summary: existing.summary,
+                extractedProjectTitle: existing.extractedProjectTitle,
+                extractedBuyer: existing.extractedBuyer,
+                extractedStudio: existing.extractedStudio,
+                extractedCompanies: existing.extractedCompanies,
+                extractedPeople: existing.extractedPeople,
+                extractedStatus: existing.extractedStatus,
+                extractedCountry: existing.extractedCountry,
+                extractedSourceMaterial: existing.extractedSourceMaterial,
+                extractedFieldsNeedingReview: existing.extractedFieldsNeedingReview
+              }),
               extractionStatus: extraction.dedupeCandidate ? "Duplicate" : "Needs Review",
               needsReview: true,
               extractedFieldsNeedingReview: preserveExistingFieldNote(existing.extractedFieldsNeedingReview)
@@ -694,6 +988,22 @@ async function persistAiExtraction(articleId: string, confirmOverwrite: boolean)
               ...mapped,
               extractedStructuredDataJson: extractionSnapshot,
               aiExtractionError: null,
+              ...buildArticleConfidenceData({
+                sourceReliability: existing.sourceReliability ?? inferSourceReliability(existing.publication, existing.url),
+                extractionMode: extraction.mode,
+                extractedText: existing.extractedText,
+                extractedExcerpt: existing.extractedExcerpt,
+                summary: existing.summary,
+                extractedProjectTitle: extraction.title,
+                extractedBuyer: extraction.buyer,
+                extractedStudio: extraction.studio,
+                extractedCompanies: extraction.productionCompanies.join(", "),
+                extractedPeople: extraction.people.join(", "),
+                extractedStatus: extraction.status,
+                extractedCountry: extraction.country,
+                extractedSourceMaterial: extraction.sourceMaterial,
+                extractedFieldsNeedingReview: extraction.fieldsNeedingReview.join(", ")
+              }),
               extractionStatus: extraction.dedupeCandidate ? "Duplicate" : "Needs Review",
               needsReview: true
             })
@@ -702,7 +1012,23 @@ async function persistAiExtraction(articleId: string, confirmOverwrite: boolean)
       return {
         ...existing,
         aiExtractionError: error instanceof Error ? error.message : "AI extraction failed.",
-        needsReview: true
+        needsReview: true,
+        ...buildArticleConfidenceData({
+          sourceReliability: existing.sourceReliability ?? inferSourceReliability(existing.publication, existing.url),
+          extractionMode: existing.extractionMode,
+          extractedText: existing.extractedText,
+          extractedExcerpt: existing.extractedExcerpt,
+          summary: existing.summary,
+          extractedProjectTitle: existing.extractedProjectTitle,
+          extractedBuyer: existing.extractedBuyer,
+          extractedStudio: existing.extractedStudio,
+          extractedCompanies: existing.extractedCompanies,
+          extractedPeople: existing.extractedPeople,
+          extractedStatus: existing.extractedStatus,
+          extractedCountry: existing.extractedCountry,
+          extractedSourceMaterial: existing.extractedSourceMaterial,
+          extractedFieldsNeedingReview: existing.extractedFieldsNeedingReview
+        })
       };
     }
   });
@@ -751,7 +1077,23 @@ async function persistBodyFetch(articleId: string) {
           robotsAllowed: result.robotsAllowed,
           paywallLikely: result.paywallLikely,
           sourceReliability: article.sourceReliability ?? inferSourceReliability(article.publication, article.url),
-          needsReview: true
+          needsReview: true,
+          ...buildArticleConfidenceData({
+            sourceReliability: article.sourceReliability ?? inferSourceReliability(article.publication, article.url),
+            extractionMode: article.extractionMode,
+            extractedText: result.extractedText,
+            extractedExcerpt: result.extractedExcerpt,
+            summary: article.summary,
+            extractedProjectTitle: article.extractedProjectTitle,
+            extractedBuyer: article.extractedBuyer,
+            extractedStudio: article.extractedStudio,
+            extractedCompanies: article.extractedCompanies,
+            extractedPeople: article.extractedPeople,
+            extractedStatus: article.extractedStatus,
+            extractedCountry: article.extractedCountry,
+            extractedSourceMaterial: article.extractedSourceMaterial,
+            extractedFieldsNeedingReview: article.extractedFieldsNeedingReview
+          })
         }
       })
       .catch(() => null);
@@ -820,7 +1162,23 @@ async function persistBodyFetch(articleId: string) {
       robotsAllowed: result.robotsAllowed,
       paywallLikely: result.paywallLikely,
       sourceReliability: existing.sourceReliability ?? inferSourceReliability(existing.publication, existing.url),
-      needsReview: true
+      needsReview: true,
+      ...buildArticleConfidenceData({
+        sourceReliability: existing.sourceReliability ?? inferSourceReliability(existing.publication, existing.url),
+        extractionMode: existing.extractionMode,
+        extractedText: result.extractedText,
+        extractedExcerpt: result.extractedExcerpt,
+        summary: existing.summary,
+        extractedProjectTitle: existing.extractedProjectTitle,
+        extractedBuyer: existing.extractedBuyer,
+        extractedStudio: existing.extractedStudio,
+        extractedCompanies: existing.extractedCompanies,
+        extractedPeople: existing.extractedPeople,
+        extractedStatus: existing.extractedStatus,
+        extractedCountry: existing.extractedCountry,
+        extractedSourceMaterial: existing.extractedSourceMaterial,
+        extractedFieldsNeedingReview: existing.extractedFieldsNeedingReview
+      })
     };
   });
 }
@@ -876,6 +1234,7 @@ export async function saveExtractedFields(formData: FormData) {
   await requireEditorActionAccess();
   const articleId = String(formData.get("articleId") ?? "");
   if (!articleId) return;
+  const previous = await prisma.article.findUnique({ where: { id: articleId } }).catch(() => null);
 
   const payload = {
     suspectedCategory: String(formData.get("suspectedCategory") ?? "").trim() || null,
@@ -901,12 +1260,49 @@ export async function saveExtractedFields(formData: FormData) {
     extractedDeduplicationNotes: String(formData.get("extractedDeduplicationNotes") ?? "").trim() || null,
     summary: String(formData.get("summary") ?? "").trim() || null
   };
+  const confidencePayload = buildArticleConfidenceData(
+    {
+      sourceReliability: previous?.sourceReliability ?? inferSourceReliability(previous?.publication, previous?.url),
+      extractionMode: previous?.extractionMode ?? "manual",
+      extractedText: previous?.extractedText,
+      extractedExcerpt: previous?.extractedExcerpt,
+      summary: payload.summary,
+      extractedProjectTitle: payload.extractedProjectTitle,
+      extractedBuyer: payload.extractedBuyer,
+      extractedStudio: payload.extractedStudio,
+      extractedCompanies: payload.extractedCompanies,
+      extractedPeople: payload.extractedPeople,
+      extractedStatus: payload.extractedStatus,
+      extractedCountry: payload.extractedCountry,
+      extractedSourceMaterial: payload.extractedSourceMaterial,
+      extractedFieldsNeedingReview: payload.extractedFieldsNeedingReview
+    },
+    { manual: true }
+  );
 
-  const previous = await prisma.article.findUnique({ where: { id: articleId } }).catch(() => null);
-  const updated = await prisma.article.update({ where: { id: articleId }, data: payload }).catch(() => null);
+  const updated = await prisma.article.update({
+    where: { id: articleId },
+    data: {
+      ...payload,
+      confidenceScore: payload.confidenceScore ?? confidencePayload.confidenceScore,
+      extractionConfidence: confidencePayload.extractionConfidence,
+      extractionSource: confidencePayload.extractionSource,
+      bodyAvailable: confidencePayload.bodyAvailable,
+      extractedFieldsNeedingReview: confidencePayload.extractedFieldsNeedingReview
+    }
+  }).catch(() => null);
   if (!updated) {
-    await updateMockArticle(articleId, (article) => ({ ...article, ...payload }));
+    await updateMockArticle(articleId, (article) => ({
+      ...article,
+      ...payload,
+      confidenceScore: payload.confidenceScore ?? confidencePayload.confidenceScore,
+      extractionConfidence: confidencePayload.extractionConfidence,
+      extractionSource: confidencePayload.extractionSource,
+      bodyAvailable: confidencePayload.bodyAvailable,
+      extractedFieldsNeedingReview: confidencePayload.extractedFieldsNeedingReview
+    }));
   } else {
+    await syncArticleMissingDataFromRecord(updated);
     await recordAuditLog({
       entityType: "Article",
       entityId: updated.id,
@@ -946,6 +1342,12 @@ export async function createProjectFromArticle(formData: FormData) {
   });
 
   if (duplicate && "headline" in duplicate) {
+    await triggerDuplicateDetectedAlert({
+      entityType: "Article",
+      entityId: article.id,
+      label: article.headline,
+      details: `Similar article already exists: ${duplicate.headline}.`
+    });
     await prisma.article.update({
       where: { id: article.id },
       data: {
@@ -989,7 +1391,22 @@ export async function createProjectFromArticle(formData: FormData) {
         lastUpdateDate: article.publishedDate ?? new Date(),
         sourceUrl: article.url,
         sourcePublication: article.publication,
-        confidenceScore: article.confidenceScore ?? 0.6,
+        ...getProjectConfidencePayload({
+          sourceReliability: article.sourceReliability,
+          bodyAvailable: article.bodyAvailable,
+          title,
+          buyer: article.extractedBuyer,
+          studio: article.extractedStudio,
+          genre: article.extractedGenre,
+          status: article.extractedStatus,
+          country: article.extractedCountry,
+          announcementDate: article.extractedAnnouncementDate,
+          logline: article.extractedLogline,
+          sourceUrl: article.url,
+          productionCompanies: parseCsv(article.extractedCompanies),
+          people: parseCsv(article.extractedPeople),
+          needsReview: false
+        }),
         needsReview: false,
         notes: "Created from Article Review Queue."
       }
@@ -997,6 +1414,38 @@ export async function createProjectFromArticle(formData: FormData) {
 
     projectId = project?.id;
     if (project) {
+      await syncProjectMissingDataFromRecord({
+        id: project.id,
+        buyerId: project.buyerId,
+        networkOrPlatform: project.networkOrPlatform,
+        studioId: project.studioId,
+        sourceUrl: project.sourceUrl,
+        confidenceLevel: project.confidenceLevel,
+        productionCompanies: parseCsv(article.extractedCompanies)
+      });
+      await triggerWatchlistAlertsForEntity({
+        entityType: "Project",
+        entityId: project.id,
+        title: project.title,
+        buyer: article.extractedBuyer,
+        company: article.extractedStudio,
+        genre: article.extractedGenre,
+        source: article.publication,
+        status: project.status,
+        country: article.extractedCountry,
+        keywordText: [article.extractedLogline, article.extractedCompanies, article.extractedPeople].filter(Boolean).join(" "),
+        url: article.url
+      });
+      await triggerLowConfidenceAlert({
+        entityType: "Project",
+        entityId: project.id,
+        label: project.title,
+        confidenceLevel: project.confidenceLevel,
+        impact:
+          project.status === "series_order" || project.status === "pilot_order" || project.status === "sold"
+            ? "high"
+            : "medium"
+      });
       await recordAuditLog({
         entityType: "Project",
         entityId: project.id,
@@ -1021,6 +1470,7 @@ export async function createProjectFromArticle(formData: FormData) {
   }).catch(() => null);
 
   if (updatedArticle) {
+    await syncArticleMissingDataFromRecord(updatedArticle);
     await recordAuditLog({
       entityType: "Article",
       entityId: updatedArticle.id,
@@ -1111,10 +1561,49 @@ export async function createCurrentShowFromArticle(formData: FormData) {
           studio: article.extractedStudio,
           productionCompanies: article.extractedCompanies,
           country: article.extractedCountry,
+          sourceType: article.sourceType,
+          sourceReliability: article.sourceReliability,
+          needsVerification: true,
           sourceUrl: article.url,
-          notes: article.summary || "Created from Article Review Queue."
+          notes: article.summary || "Created from Article Review Queue.",
+          ...getCurrentShowConfidencePayload({
+            sourceReliability: article.sourceReliability,
+            title,
+            networkOrPlatform: article.extractedBuyer || "Unknown",
+            premiereDate: article.extractedPremiereDate,
+            finaleDate: null,
+            studio: article.extractedStudio,
+            productionCompanies: article.extractedCompanies,
+            genre: article.extractedGenre,
+            country: article.extractedCountry,
+            sourceUrl: article.url,
+            verifiedAt: null,
+            needsVerification: true,
+            notes: article.summary || "Created from Article Review Queue."
+          })
         }
       }).then(async (created) => {
+        await syncCurrentShowMissingDataFromRecord(created);
+        await triggerWatchlistAlertsForEntity({
+          entityType: "CurrentShow",
+          entityId: created.id,
+          title: created.title,
+          buyer: created.networkOrPlatform,
+          company: created.studio,
+          genre: created.genre,
+          source: created.sourceType ?? created.sourceUrl,
+          status: created.status,
+          country: created.country,
+          keywordText: [created.productionCompanies, created.notes].filter(Boolean).join(" "),
+          url: created.sourceUrl
+        });
+        await triggerLowConfidenceAlert({
+          entityType: "CurrentShow",
+          entityId: created.id,
+          label: created.title,
+          confidenceLevel: created.confidenceLevel,
+          impact: "high"
+        });
         await recordAuditLog({
           entityType: "CurrentShow",
           entityId: created.id,
@@ -1140,6 +1629,7 @@ export async function createCurrentShowFromArticle(formData: FormData) {
   }).catch(() => null);
 
   if (updatedArticle) {
+    await syncArticleMissingDataFromRecord(updatedArticle);
     await recordAuditLog({
       entityType: "Article",
       entityId: updatedArticle.id,

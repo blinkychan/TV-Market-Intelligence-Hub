@@ -1,7 +1,3 @@
-import { JSDOM } from "jsdom";
-import { Readability } from "@mozilla/readability";
-import robotsParser from "robots-parser";
-
 export type BodyFetchStatus =
   | "not_fetched"
   | "success"
@@ -25,6 +21,38 @@ export type BodyFetchResult = {
 
 const BODY_USER_AGENT = "TV Market Intelligence Hub/0.1 (article body extraction; metadata + internal review only)";
 const FETCH_TIMEOUT_MS = 8000;
+
+async function loadModule<T>(specifier: string): Promise<T | null> {
+  try {
+    const dynamicImport = new Function("s", "return import(s)") as (s: string) => Promise<T>;
+    return await dynamicImport(specifier);
+  } catch {
+    return null;
+  }
+}
+
+async function loadRobotsParser() {
+  const module = await loadModule<{ default?: (url: string, body: string) => { isAllowed: (targetUrl: string, userAgent?: string) => boolean | undefined } }>(
+    "robots-parser"
+  );
+  return module?.default ?? null;
+}
+
+async function loadReadabilityRuntime() {
+  const [jsdomModule, readabilityModule] = await Promise.all([
+    loadModule<{ JSDOM?: new (html: string, options?: { url?: string }) => { window: { document: Document } } }>("jsdom"),
+    loadModule<{ Readability?: new (document: Document) => { parse: () => { textContent?: string | null } | null } }>("@mozilla/readability")
+  ]);
+
+  if (!jsdomModule?.JSDOM || !readabilityModule?.Readability) {
+    return null;
+  }
+
+  return {
+    JSDOM: jsdomModule.JSDOM,
+    Readability: readabilityModule.Readability
+  };
+}
 
 const MOCK_BODY_FIXTURES: Record<string, BodyFetchResult> = {
   "https://preview.example.com/harbor-lights": {
@@ -125,7 +153,9 @@ export async function checkRobotsAllowed(url: string): Promise<boolean | null> {
     if (!response.ok) return null;
 
     const body = await response.text();
-    const robots = robotsParser(robotsUrl, body);
+    const parser = await loadRobotsParser();
+    if (!parser) return null;
+    const robots = parser(robotsUrl, body);
     const allowed = robots.isAllowed(url, BODY_USER_AGENT);
     return typeof allowed === "boolean" ? allowed : null;
   } catch {
@@ -133,11 +163,11 @@ export async function checkRobotsAllowed(url: string): Promise<boolean | null> {
   }
 }
 
-export function extractReadableText(html: string, url = "https://example.com/article"): {
+export async function extractReadableText(html: string, url = "https://example.com/article"): Promise<{
   extractedText: string | null;
   extractedExcerpt: string | null;
   paywallLikely: boolean;
-} {
+}> {
   const paywallLikely = detectPaywall(html);
   if (paywallLikely) {
     return {
@@ -148,8 +178,16 @@ export function extractReadableText(html: string, url = "https://example.com/art
   }
 
   try {
-    const dom = new JSDOM(html, { url });
-    const reader = new Readability(dom.window.document);
+    const runtime = await loadReadabilityRuntime();
+    if (!runtime) {
+      return {
+        extractedText: null,
+        extractedExcerpt: null,
+        paywallLikely: false
+      };
+    }
+    const dom = new runtime.JSDOM(html, { url });
+    const reader = new runtime.Readability(dom.window.document);
     const article = reader.parse();
     const extractedText = article?.textContent?.replace(/\s+/g, " ").trim() ?? null;
 
@@ -216,7 +254,7 @@ export async function fetchArticleBody(url: string): Promise<BodyFetchResult> {
     }
 
     const rawHtml = await response.text();
-    const readable = extractReadableText(rawHtml, url);
+    const readable = await extractReadableText(rawHtml, url);
 
     if (readable.paywallLikely) {
       return {

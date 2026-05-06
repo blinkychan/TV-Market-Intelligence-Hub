@@ -3,13 +3,15 @@
 import { Fragment, useMemo, useState, type ChangeEvent } from "react";
 import Link from "next/link";
 import { addDays, endOfMonth, format, isWithinInterval, startOfDay, startOfMonth } from "date-fns";
-import { CalendarDays, CheckCircle2, ChevronDown, ChevronRight, ExternalLink, FileSpreadsheet, ListFilter, Search, ShieldAlert, Table2 } from "lucide-react";
+import { CalendarDays, CheckCircle2, ChevronDown, ChevronRight, Download, ExternalLink, FileSpreadsheet, ListFilter, Search, ShieldAlert, Table2, Upload } from "lucide-react";
 import { flagPremiereConflictAction, importCurrentShowsCsvAction, markPremiereVerifiedAction, saveCurrentShowAction } from "@/app/current-tv/actions";
 import type { AuditLogEntry } from "@/lib/audit";
+import { confidenceTone, parseConfidenceReasons } from "@/lib/confidence";
 import type { TeamNoteRecord } from "@/lib/team-notes";
+import { BulkEditPanel } from "@/components/shared/bulk-edit-panel";
 import { SavedViewsPanel } from "@/components/shared/saved-views-panel";
 import { Badge, StatusBadge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, ButtonLink } from "@/components/ui/button";
 import { Input, Select } from "@/components/ui/input";
 import { TeamNotesPanel } from "@/components/shared/team-notes-panel";
 import { Table, Td, Th } from "@/components/ui/table";
@@ -33,6 +35,9 @@ export type CurrentTvRow = {
   country: string | null;
   sourceType?: string | null;
   sourceReliability?: string | null;
+  confidenceScore?: number | null;
+  confidenceLevel?: string | null;
+  confidenceReasons?: string | null;
   seasonType?: string | null;
   premiereTime?: string | null;
   episodeTitle?: string | null;
@@ -52,11 +57,26 @@ type CurrentTvTrackerProps = {
   dataSource: "database" | "mock";
   errorMessage?: string;
   canEdit: boolean;
+  canArchive?: boolean;
   currentUserEmail?: string | null;
   canManageAllNotes?: boolean;
   savedViewsData?: SavedViewRecord[];
   canCreateTeamView?: boolean;
   canManageAllSavedViews?: boolean;
+  initialFilters?: Partial<{
+    mode: "table" | "calendar";
+    savedView: string;
+    calendarWindow: string;
+    query: string;
+    platform: string;
+    premiereFrom: string;
+    premiereTo: string;
+    genre: string;
+    studio: string;
+    status: string;
+    country: string;
+    confidence: string;
+  }>;
 };
 
 const savedViews = [
@@ -196,24 +216,28 @@ export function CurrentTvTracker({
   dataSource,
   errorMessage,
   canEdit,
+  canArchive = false,
   currentUserEmail,
   canManageAllNotes,
   savedViewsData = [],
   canCreateTeamView = false,
-  canManageAllSavedViews = false
+  canManageAllSavedViews = false,
+  initialFilters
 }: CurrentTvTrackerProps) {
-  const [mode, setMode] = useState<"table" | "calendar">("table");
-  const [savedView, setSavedView] = useState("airing");
-  const [calendarWindow, setCalendarWindow] = useState("week");
-  const [query, setQuery] = useState("");
-  const [platform, setPlatform] = useState("all");
-  const [premiereFrom, setPremiereFrom] = useState("");
-  const [premiereTo, setPremiereTo] = useState("");
-  const [genre, setGenre] = useState("all");
-  const [studio, setStudio] = useState("all");
-  const [status, setStatus] = useState("all");
-  const [country, setCountry] = useState("all");
+  const [mode, setMode] = useState<"table" | "calendar">(initialFilters?.mode ?? "table");
+  const [savedView, setSavedView] = useState(initialFilters?.savedView ?? "airing");
+  const [calendarWindow, setCalendarWindow] = useState(initialFilters?.calendarWindow ?? "week");
+  const [query, setQuery] = useState(initialFilters?.query ?? "");
+  const [platform, setPlatform] = useState(initialFilters?.platform ?? "all");
+  const [premiereFrom, setPremiereFrom] = useState(initialFilters?.premiereFrom ?? "");
+  const [premiereTo, setPremiereTo] = useState(initialFilters?.premiereTo ?? "");
+  const [genre, setGenre] = useState(initialFilters?.genre ?? "all");
+  const [studio, setStudio] = useState(initialFilters?.studio ?? "all");
+  const [status, setStatus] = useState(initialFilters?.status ?? "all");
+  const [country, setCountry] = useState(initialFilters?.country ?? "all");
+  const [confidence, setConfidence] = useState(initialFilters?.confidence ?? "all");
   const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [csvPreview, setCsvPreview] = useState<CsvPreviewState | null>(null);
   const now = useMemo(() => new Date(), []);
 
@@ -230,6 +254,7 @@ export function CurrentTvTracker({
     setStudio(String(filters.studio ?? "all"));
     setStatus(String(filters.status ?? "all"));
     setCountry(String(filters.country ?? "all"));
+    setConfidence(String(filters.confidence ?? "all"));
   }
 
   const calendarRange = useMemo(() => buildCalendarWindow(calendarWindow, now), [calendarWindow, now]);
@@ -258,11 +283,12 @@ export function CurrentTvTracker({
         if (studio !== "all" && row.studio !== studio) return false;
         if (status !== "all" && row.status !== status) return false;
         if (country !== "all" && row.country !== country) return false;
+        if (confidence !== "all" && row.confidenceLevel !== confidence) return false;
         if (premiereFrom && row.premiereDate && new Date(row.premiereDate) < new Date(premiereFrom)) return false;
         if (premiereTo && row.premiereDate && new Date(row.premiereDate) > new Date(premiereTo)) return false;
         return true;
       }),
-    [rows, savedView, now, query, platform, genre, studio, status, country, premiereFrom, premiereTo]
+    [rows, savedView, now, query, platform, genre, studio, status, country, confidence, premiereFrom, premiereTo]
   );
 
   const calendarRows = useMemo(
@@ -300,6 +326,28 @@ export function CurrentTvTracker({
       });
     return Array.from(groups.entries());
   }, [calendarRows]);
+
+  const exportHref = useMemo(() => {
+    const params = new URLSearchParams({
+      pageType: "current_tv_tracker",
+      savedView,
+      mode,
+      calendarWindow,
+      q: query,
+      platform,
+      premiereFrom,
+      premiereTo,
+      genre,
+      studio,
+      status,
+      country,
+      confidence
+    });
+    Array.from(params.entries()).forEach(([key, value]) => {
+      if (!value || value === "all") params.delete(key);
+    });
+    return `/api/export?${params.toString()}`;
+  }, [savedView, mode, calendarWindow, query, platform, premiereFrom, premiereTo, genre, studio, status, country, confidence]);
 
   const activeSavedView = savedViews.find((view) => view.id === savedView)?.label;
   const verificationCount = rows.filter((row) => row.needsVerification).length;
@@ -422,7 +470,8 @@ export function CurrentTvTracker({
             genre,
             studio,
             status,
-            country
+            country,
+            confidence
           }
         }}
         canCreateTeamView={canCreateTeamView}
@@ -464,6 +513,14 @@ export function CurrentTvTracker({
             </Button>
           </div>
         </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <ButtonLink href={exportHref} variant="secondary">
+            <Download className="h-4 w-4" /> Export CSV
+          </ButtonLink>
+          <ButtonLink href="/sources/import" variant="ghost">
+            <Upload className="h-4 w-4" /> Import CSV
+          </ButtonLink>
+        </div>
         {errorMessage ? (
           <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
             Database unavailable, showing mock preview data. Detail: {errorMessage}
@@ -502,6 +559,12 @@ export function CurrentTvTracker({
             <Select value={country} onChange={(event) => setCountry(event.target.value)}>
               <option value="all">All countries</option>
               {countries.map((item) => <option key={item} value={item}>{item}</option>)}
+            </Select>
+            <Select value={confidence} onChange={(event) => setConfidence(event.target.value)}>
+              <option value="all">All confidence</option>
+              <option value="high">High confidence</option>
+              <option value="medium">Medium confidence</option>
+              <option value="low">Low confidence</option>
             </Select>
           </div>
         </div>
@@ -699,17 +762,33 @@ export function CurrentTvTracker({
         </div>
       )}
 
+      {canEdit ? <BulkEditPanel entityType="CurrentShow" selectedIds={selectedIds} canEdit={canEdit} canArchive={canArchive} /> : null}
+
       {mode === "table" ? (
         <div className="overflow-hidden rounded-lg border bg-white shadow-panel">
           <div className="flex items-center justify-between border-b bg-slate-50 px-4 py-3">
             <div className="text-sm font-medium">{filteredRows.length} shows shown</div>
-            <div className="text-xs text-muted-foreground">Saved view: {activeSavedView}</div>
+            <div className="text-xs text-muted-foreground">Saved view: {activeSavedView} · {selectedIds.length} selected</div>
           </div>
           {filteredRows.length ? (
             <div className="overflow-x-auto">
               <Table>
                 <thead className="bg-white">
                   <tr>
+                    <Th>
+                      <input
+                        type="checkbox"
+                        checked={filteredRows.length > 0 && filteredRows.every((show) => selectedIds.includes(show.id))}
+                        onChange={(event) =>
+                          setSelectedIds((current) =>
+                            event.target.checked
+                              ? Array.from(new Set([...current, ...filteredRows.map((show) => show.id)]))
+                              : current.filter((id) => !filteredRows.some((show) => show.id === id))
+                          )
+                        }
+                        aria-label="Select all filtered shows"
+                      />
+                    </Th>
                     <Th />
                     <Th>Show</Th>
                     <Th>Network / Platform</Th>
@@ -718,6 +797,7 @@ export function CurrentTvTracker({
                     <Th>Status</Th>
                     <Th>Genre</Th>
                     <Th>Verified</Th>
+                    <Th>Confidence</Th>
                     <Th>Source</Th>
                   </tr>
                 </thead>
@@ -725,6 +805,18 @@ export function CurrentTvTracker({
                   {filteredRows.map((show) => (
                     <Fragment key={show.id}>
                       <tr className="hover:bg-slate-50">
+                        <Td>
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.includes(show.id)}
+                            onChange={(event) =>
+                              setSelectedIds((current) =>
+                                event.target.checked ? Array.from(new Set([...current, show.id])) : current.filter((id) => id !== show.id)
+                              )
+                            }
+                            aria-label={`Select ${show.title}`}
+                          />
+                        </Td>
                         <Td>
                           <button
                             className="rounded p-1 transition hover:bg-muted"
@@ -756,12 +848,18 @@ export function CurrentTvTracker({
                           {show.needsVerification ? <div className="text-xs text-amber-800">Needs check</div> : null}
                         </Td>
                         <Td>
+                          <Badge className={confidenceTone(show.confidenceLevel)}>
+                            {humanize(show.confidenceLevel ?? "low")}
+                            {show.confidenceScore != null ? ` · ${Math.round(show.confidenceScore * 100)}%` : ""}
+                          </Badge>
+                        </Td>
+                        <Td>
                           <Badge className={sourceReliabilityTone(show.sourceReliability)}>{humanize(show.sourceReliability ?? "low")}</Badge>
                         </Td>
                       </tr>
                       {expandedRows[show.id] ? (
                         <tr>
-                          <Td colSpan={9} className="bg-slate-50">
+                          <Td colSpan={11} className="bg-slate-50">
                             <ShowDetail
                               show={show}
                               canEdit={canEdit}
@@ -867,6 +965,18 @@ function ShowDetail({
         <DetailItem label="Episode" value={show.episodeTitle ? `${show.episodeTitle}${show.episodeNumber ? ` (#${show.episodeNumber})` : ""}` : "TBD"} />
         <DetailItem label="Last Verified" value={formatDate(show.verifiedAt ?? null)} />
         <DetailItem label="Verification Status" value={show.needsVerification ? "Needs verification" : "Verified"} />
+        <div className="md:col-span-2">
+          <div className="text-xs font-semibold uppercase text-muted-foreground">Confidence</div>
+          <div className="mt-1 flex flex-wrap gap-2">
+            <Badge className={confidenceTone(show.confidenceLevel)}>
+              {humanize(show.confidenceLevel ?? "low")}
+              {show.confidenceScore != null ? ` · ${Math.round(show.confidenceScore * 100)}%` : ""}
+            </Badge>
+          </div>
+          <p className="mt-2 text-sm text-muted-foreground">
+            {parseConfidenceReasons(show.confidenceReasons).join(", ") || "No confidence notes yet."}
+          </p>
+        </div>
         <div>
           <div className="text-xs font-semibold uppercase text-muted-foreground">Source URL</div>
           {show.sourceUrl ? (

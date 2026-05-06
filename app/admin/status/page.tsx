@@ -3,6 +3,7 @@ import { Activity, Database, FileText, Play, Radio, RefreshCcw, ShieldCheck } fr
 import { logoutAdmin } from "../login/actions";
 import { saveUserProfileAction } from "./actions";
 import { logoutTeamSession } from "@/app/login/actions";
+import { sendAlertDigestNowAction, sendWeeklyReportNowAction } from "@/app/settings/notifications/actions";
 import { fetchArticleBodyAction, fetchBodiesForNeedsReview, fetchSelectedBodiesAction } from "@/app/review/actions";
 import { runRssIngestion } from "@/app/sources/actions";
 import { runNextBackfillJobAction } from "@/app/sources/backfill/actions";
@@ -147,10 +148,15 @@ function RunMeta({ label, run }: { label: string; run: StatusSnapshot["latestRss
   );
 }
 
-export default async function AdminStatusPage() {
+export default async function AdminStatusPage({
+  searchParams
+}: {
+  searchParams: Promise<{ weeklyEmail?: string; alertEmail?: string }>;
+}) {
   await requireAdminCapabilityAccess();
   const snapshot = await getStatusSnapshot();
   const auth = await getCurrentUserContext();
+  const params = await searchParams;
 
   return (
     <div className="space-y-6">
@@ -202,6 +208,10 @@ export default async function AdminStatusPage() {
               NEXT_PUBLIC_APP_URL=...
               <br />
               ADMIN_PASSWORD=...
+              <br />
+              RESEND_API_KEY=...
+              <br />
+              REPORT_FROM_EMAIL=...
             </div>
           </CardContent>
         </Card>
@@ -253,6 +263,13 @@ export default async function AdminStatusPage() {
         <RunMeta label="Last Body Extraction Run" run={snapshot.latestBodyFetchRun} />
       </section>
 
+      {params.weeklyEmail ? (
+        <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">{params.weeklyEmail}</div>
+      ) : null}
+      {params.alertEmail ? (
+        <div className="rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900">{params.alertEmail}</div>
+      ) : null}
+
       <div className="grid gap-6 xl:grid-cols-[1fr_1fr]">
         <Card className="shadow-panel">
           <CardHeader>
@@ -279,6 +296,28 @@ export default async function AdminStatusPage() {
               <p className="mt-2 text-sm text-muted-foreground">Process exactly one queued historical batch and leave all new records in review.</p>
               <Button type="submit" className="mt-4 w-full" disabled={!snapshot.databaseConnected}>
                 Run next batch
+              </Button>
+            </form>
+
+            <form action={sendWeeklyReportNowAction} className="rounded-lg border bg-slate-50 p-4">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <ShieldCheck className="h-4 w-4 text-primary" />
+                Send weekly report now
+              </div>
+              <p className="mt-2 text-sm text-muted-foreground">Generates the current Friday report and emails only teammates who explicitly opted in.</p>
+              <Button type="submit" className="mt-4 w-full" disabled={!snapshot.databaseConnected}>
+                Send Friday report
+              </Button>
+            </form>
+
+            <form action={sendAlertDigestNowAction} className="rounded-lg border bg-slate-50 p-4">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <Activity className="h-4 w-4 text-primary" />
+                Send alert digest now
+              </div>
+              <p className="mt-2 text-sm text-muted-foreground">Batches unread high-severity alerts into a digest instead of sending one email per alert.</p>
+              <Button type="submit" className="mt-4 w-full" disabled={!snapshot.databaseConnected}>
+                Send alert digest
               </Button>
             </form>
 

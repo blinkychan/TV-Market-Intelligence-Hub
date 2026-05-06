@@ -3,6 +3,12 @@
 import { revalidatePath } from "next/cache";
 import type { DuplicateStatus } from "@prisma/client";
 import { recordAuditLog } from "@/lib/audit";
+import {
+  calculateArticleConfidence,
+  calculateCurrentShowConfidence,
+  calculateProjectConfidence,
+  joinConfidenceReasons
+} from "@/lib/confidence";
 import { logOperationalEvent } from "@/lib/ops-log";
 import { prisma } from "@/lib/prisma";
 import { requireEditorActionAccess } from "@/lib/team-auth";
@@ -25,6 +31,46 @@ function appendNote(existing: string | null | undefined, addition: string) {
 function parseSelection(formData: FormData, field: string) {
   const value = String(formData.get(field) ?? "").trim();
   return value || null;
+}
+
+function deriveArticleMergeConfidence(record: {
+  sourceReliability?: string | null;
+  extractionSource?: string | null;
+  bodyAvailable?: boolean | null;
+  extractedText?: string | null;
+  extractedExcerpt?: string | null;
+  summary?: string | null;
+  extractedProjectTitle?: string | null;
+  extractedBuyer?: string | null;
+  extractedStudio?: string | null;
+  extractedCompanies?: string | null;
+  extractedPeople?: string | null;
+  extractedStatus?: string | null;
+  extractedCountry?: string | null;
+  extractedSourceMaterial?: string | null;
+  extractedFieldsNeedingReview?: string | null;
+}) {
+  const confidence = calculateArticleConfidence({
+    sourceReliability: record.sourceReliability,
+    extractionSource: record.extractionSource,
+    bodyAvailable: record.bodyAvailable,
+    extractedText: record.extractedText,
+    extractedExcerpt: record.extractedExcerpt,
+    summary: record.summary,
+    title: record.extractedProjectTitle,
+    buyer: record.extractedBuyer,
+    studio: record.extractedStudio,
+    companies: record.extractedCompanies,
+    people: record.extractedPeople,
+    status: record.extractedStatus,
+    country: record.extractedCountry,
+    sourceMaterial: record.extractedSourceMaterial
+  });
+  return {
+    confidenceScore: confidence.score,
+    extractionConfidence: confidence.score,
+    extractedFieldsNeedingReview: joinConfidenceReasons(confidence.reasons)
+  };
 }
 
 async function markRows(
@@ -170,7 +216,23 @@ export async function mergeDuplicateGroupAction(formData: FormData) {
         duplicateConfidence: Math.max(...records.map((record) => record.duplicateConfidence ?? record.confidenceScore ?? 0)),
         possibleDuplicateOfId: null,
         duplicateStatus: "not_duplicate",
-        extractedDeduplicationNotes: appendNote(notesSource.extractedDeduplicationNotes, mergeNote)
+        extractedDeduplicationNotes: appendNote(notesSource.extractedDeduplicationNotes, mergeNote),
+        ...deriveArticleMergeConfidence({
+          sourceReliability: winner.sourceReliability,
+          extractionSource: winner.extractionSource,
+          bodyAvailable: winner.bodyAvailable,
+          extractedText: winner.extractedText,
+          extractedExcerpt: winner.extractedExcerpt,
+          summary: winner.summary,
+          extractedProjectTitle: winner.extractedProjectTitle,
+          extractedBuyer: winner.extractedBuyer,
+          extractedStudio: winner.extractedStudio,
+          extractedCompanies: winner.extractedCompanies,
+          extractedPeople: winner.extractedPeople,
+          extractedStatus: winner.extractedStatus,
+          extractedCountry: winner.extractedCountry,
+          extractedSourceMaterial: winner.extractedSourceMaterial
+        })
       }
     });
 
@@ -222,7 +284,29 @@ export async function mergeDuplicateGroupAction(formData: FormData) {
         announcementDate: winner.announcementDate ?? records.find((record) => record.announcementDate)?.announcementDate ?? null,
         premiereDate: winner.premiereDate ?? records.find((record) => record.premiereDate)?.premiereDate ?? null,
         sourceUrl: winner.sourceUrl ?? records.find((record) => record.sourceUrl)?.sourceUrl ?? null,
-        confidenceScore: Math.max(...records.map((record) => record.confidenceScore)),
+        ...(() => {
+          const confidence = calculateProjectConfidence({
+            sourceReliability: winner.sourcePublication?.toLowerCase().includes("deadline") ? "high" : "medium",
+            bodyAvailable: true,
+            title: labelSource.title,
+            buyer: winner.networkOrPlatform ?? records.find((record) => record.networkOrPlatform)?.networkOrPlatform ?? null,
+            studio: winner.studioId ?? records.find((record) => record.studioId)?.studioId ?? null,
+            genre: winner.genre,
+            status: winner.status,
+            country: winner.countryOfOrigin,
+            announcementDate: winner.announcementDate ?? records.find((record) => record.announcementDate)?.announcementDate ?? null,
+            logline: winner.logline,
+            sourceUrl: winner.sourceUrl,
+            productionCompanies: allCompanyIds,
+            people: allPersonIds,
+            needsReview: false
+          });
+          return {
+            confidenceScore: confidence.score,
+            confidenceLevel: confidence.level,
+            confidenceReasons: joinConfidenceReasons(confidence.reasons)
+          };
+        })(),
         duplicateGroupId: groupId || winner.duplicateGroupId,
         duplicateConfidence: Math.max(...records.map((record) => record.duplicateConfidence ?? record.confidenceScore)),
         possibleDuplicateOfId: null,
@@ -283,6 +367,28 @@ export async function mergeDuplicateGroupAction(formData: FormData) {
         studio: winner.studio ?? records.find((record) => record.studio)?.studio ?? null,
         productionCompanies: winner.productionCompanies ?? records.find((record) => record.productionCompanies)?.productionCompanies ?? null,
         sourceUrl: winner.sourceUrl ?? records.find((record) => record.sourceUrl)?.sourceUrl ?? null,
+        ...(() => {
+          const confidence = calculateCurrentShowConfidence({
+            sourceReliability: winner.sourceReliability,
+            title: labelSource.title,
+            networkOrPlatform: winner.networkOrPlatform || records.find((record) => record.networkOrPlatform)?.networkOrPlatform || "Unknown",
+            premiereDate: winner.premiereDate ?? records.find((record) => record.premiereDate)?.premiereDate ?? null,
+            finaleDate: winner.finaleDate ?? records.find((record) => record.finaleDate)?.finaleDate ?? null,
+            studio: winner.studio ?? records.find((record) => record.studio)?.studio ?? null,
+            productionCompanies: winner.productionCompanies ?? records.find((record) => record.productionCompanies)?.productionCompanies ?? null,
+            genre: winner.genre,
+            country: winner.country,
+            sourceUrl: winner.sourceUrl ?? records.find((record) => record.sourceUrl)?.sourceUrl ?? null,
+            verifiedAt: winner.verifiedAt,
+            needsVerification: winner.needsVerification,
+            notes: appendNote(notesSource.notes, mergeNote)
+          });
+          return {
+            confidenceScore: confidence.score,
+            confidenceLevel: confidence.level,
+            confidenceReasons: joinConfidenceReasons(confidence.reasons)
+          };
+        })(),
         duplicateGroupId: groupId || winner.duplicateGroupId,
         duplicateConfidence: Math.max(...records.map((record) => record.duplicateConfidence ?? 0)),
         possibleDuplicateOfId: null,

@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Activity, Database, FileText, Plus, Radio, Upload } from "lucide-react";
 import { addManualArticle, runMockRssIngestion, runRssIngestion, saveRssFeed } from "./actions";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, ButtonLink } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Table, Td, Th } from "@/components/ui/table";
@@ -264,16 +264,15 @@ export default async function SourcesPage() {
           <Card className="shadow-panel">
             <CardHeader>
               <CardTitle>CSV Import</CardTitle>
-              <p className="text-sm text-muted-foreground">File-based import is staged here, but processing is intentionally deferred.</p>
+              <p className="text-sm text-muted-foreground">Bring in structured batches for projects, current shows, buyers, companies, people, or articles.</p>
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="rounded-lg border border-dashed bg-slate-50 p-5 text-sm text-muted-foreground">
-                Use this drop zone later for editorial exports, article trackers, or old development slates.
+                Use the dedicated import manager for mapped previews, duplicate checks, audit-safe writes, and manual backfill.
               </div>
-              <Input type="file" disabled />
-              <Button type="button" variant="secondary" className="w-full" disabled>
-                <Upload className="h-4 w-4" /> CSV import coming next
-              </Button>
+              <ButtonLink href="/sources/import" variant="secondary" className="w-full">
+                <Upload className="h-4 w-4" /> Open CSV Import Manager
+              </ButtonLink>
             </CardContent>
           </Card>
         </div>

@@ -84,6 +84,47 @@ enum SavedViewVisibility {
   team
 }
 
+enum ConfidenceLevel {
+  high
+  medium
+  low
+}
+
+enum SourceCoverageType {
+  trade
+  official_press
+  calendar
+  manual_csv
+  search_api
+  rss
+}
+
+enum MissingDataSeverity {
+  low
+  medium
+  high
+}
+
+enum WatchlistType {
+  buyer
+  company
+  person
+  genre
+  keyword
+  source
+  status
+  country
+}
+
+enum AlertType {
+  new_match
+  status_change
+  premiere_update
+  low_confidence
+  missing_data
+  duplicate_detected
+}
+
 model Project {
   id                    String         @id @default(cuid())
   title                 String
@@ -112,10 +153,14 @@ model Project {
   sourceUrl             String?
   sourcePublication     String?
   confidenceScore       Float          @default(0.7)
+  confidenceLevel       ConfidenceLevel @default(medium)
+  confidenceReasons     String?
   duplicateGroupId      String?
   duplicateConfidence   Float?
   possibleDuplicateOfId String?
   duplicateStatus       DuplicateStatus @default(not_duplicate)
+  tags                  String?
+  archivedAt            DateTime?
   needsReview           Boolean        @default(false)
   notes                 String?
   createdAt             DateTime       @default(now())
@@ -131,8 +176,10 @@ model Project {
   @@index([countryOfOrigin])
   @@index([announcementDate])
   @@index([premiereDate])
+  @@index([confidenceLevel])
   @@index([duplicateGroupId])
   @@index([duplicateStatus])
+  @@index([archivedAt])
 }
 
 model CurrentShow {
@@ -159,10 +206,15 @@ model CurrentShow {
   verifiedAt            DateTime?
   needsVerification     Boolean  @default(false)
   sourceUrl             String?
+  confidenceScore       Float    @default(0.68)
+  confidenceLevel       ConfidenceLevel @default(medium)
+  confidenceReasons     String?
   duplicateGroupId      String?
   duplicateConfidence   Float?
   possibleDuplicateOfId String?
   duplicateStatus       DuplicateStatus @default(not_duplicate)
+  tags                  String?
+  archivedAt            DateTime?
   notes                 String?
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
@@ -176,8 +228,10 @@ model CurrentShow {
   @@index([seasonType])
   @@index([needsVerification])
   @@index([verifiedAt])
+  @@index([confidenceLevel])
   @@index([duplicateGroupId])
   @@index([duplicateStatus])
+  @@index([archivedAt])
 }
 
 model CurrentTvSource {
@@ -209,6 +263,8 @@ model Buyer {
   duplicateConfidence   Float?
   possibleDuplicateOfId String?
   duplicateStatus       DuplicateStatus @default(not_duplicate)
+  tags            String?
+  archivedAt      DateTime?
   notes         String?
   projects      Project[]
   relationships Relationship[]
@@ -219,6 +275,7 @@ model Buyer {
   @@index([parentCompany])
   @@index([duplicateGroupId])
   @@index([duplicateStatus])
+  @@index([archivedAt])
 }
 
 model Company {
@@ -230,6 +287,8 @@ model Company {
   duplicateConfidence    Float?
   possibleDuplicateOfId  String?
   duplicateStatus        DuplicateStatus @default(not_duplicate)
+  tags                   String?
+  archivedAt             DateTime?
   notes                  String?
   studioProjects         Project[]      @relation("StudioProjects")
   productionProjects     Project[]      @relation("ProjectProductionCompanies")
@@ -240,6 +299,7 @@ model Company {
   @@index([type])
   @@index([duplicateGroupId])
   @@index([duplicateStatus])
+  @@index([archivedAt])
 }
 
 model Person {
@@ -253,6 +313,8 @@ model Person {
   duplicateConfidence   Float?
   possibleDuplicateOfId String?
   duplicateStatus       DuplicateStatus @default(not_duplicate)
+  tags         String?
+  archivedAt   DateTime?
   notes         String?
   projects      Project[]      @relation("ProjectPeople")
   relationships Relationship[]
@@ -263,6 +325,7 @@ model Person {
   @@index([company])
   @@index([duplicateGroupId])
   @@index([duplicateStatus])
+  @@index([archivedAt])
 }
 
 model Article {
@@ -295,6 +358,9 @@ model Article {
   linkedShowId          String?
   linkedShow            CurrentShow? @relation("LinkedShowArticles", fields: [linkedShowId], references: [id])
   confidenceScore       Float?
+  extractionConfidence  Float?
+  extractionSource      String?
+  bodyAvailable         Boolean      @default(false)
   extractedProjectTitle String?
   extractedFormat       String?
   extractedGenre        String?
@@ -320,6 +386,8 @@ model Article {
   duplicateConfidence   Float?
   possibleDuplicateOfId String?
   duplicateStatus       DuplicateStatus @default(not_duplicate)
+  tags                  String?
+  archivedAt            DateTime?
   createdAt             DateTime     @default(now())
   updatedAt             DateTime     @updatedAt
 
@@ -329,6 +397,7 @@ model Article {
   @@index([ingestionSource])
   @@index([bodyFetchStatus])
   @@index([sourceReliability])
+  @@index([extractionSource])
   @@index([extractionStatus])
   @@index([extractionMode])
   @@index([suspectedCategory])
@@ -336,6 +405,7 @@ model Article {
   @@index([linkedShowId])
   @@index([duplicateGroupId])
   @@index([duplicateStatus])
+  @@index([archivedAt])
 }
 
 model RssFeed {
@@ -370,6 +440,45 @@ model IngestionRun {
   @@index([status])
   @@index([startedAt])
   @@index([completedAt])
+}
+
+model SourceCoverage {
+  id                    String             @id @default(cuid())
+  sourceName            String
+  sourceType            SourceCoverageType
+  enabled               Boolean            @default(true)
+  lastCheckedAt         DateTime?
+  lastSuccessfulFetchAt DateTime?
+  articlesFetchedLastRun Int               @default(0)
+  articlesSavedLastRun  Int                @default(0)
+  failuresLast7Days     Int                @default(0)
+  sourceReliability     String?
+  notes                 String?
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+
+  @@unique([sourceName, sourceType])
+  @@index([sourceType])
+  @@index([enabled])
+  @@index([lastCheckedAt])
+  @@index([lastSuccessfulFetchAt])
+}
+
+model MissingDataFlag {
+  id          String              @id @default(cuid())
+  entityType  String
+  entityId    String
+  missingField String
+  severity    MissingDataSeverity
+  reason      String
+  createdAt   DateTime            @default(now())
+  resolvedAt  DateTime?
+
+  @@index([entityType])
+  @@index([entityId])
+  @@index([missingField])
+  @@index([severity])
+  @@index([resolvedAt])
 }
 
 model AuditLog {
@@ -431,6 +540,48 @@ model TeamNote {
   @@index([includeInNextWeeklyReport])
   @@index([createdByUserId])
   @@index([createdByEmail])
+  @@index([createdAt])
+}
+
+model Watchlist {
+  id              String              @id @default(cuid())
+  name            String
+  description     String?
+  watchType       WatchlistType
+  criteriaJson    Json?
+  visibility      SavedViewVisibility @default(private)
+  createdByUserId String?
+  createdByEmail  String?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  alerts          Alert[]
+
+  @@index([watchType])
+  @@index([visibility])
+  @@index([createdByUserId])
+  @@index([createdByEmail])
+  @@index([createdAt])
+}
+
+model Alert {
+  id         String              @id @default(cuid())
+  watchlistId String?
+  watchlist  Watchlist?          @relation(fields: [watchlistId], references: [id], onDelete: SetNull)
+  entityType String
+  entityId   String
+  alertType  AlertType
+  title      String
+  message    String
+  severity   MissingDataSeverity
+  isRead     Boolean             @default(false)
+  createdAt  DateTime            @default(now())
+
+  @@index([watchlistId])
+  @@index([entityType])
+  @@index([entityId])
+  @@index([alertType])
+  @@index([severity])
+  @@index([isRead])
   @@index([createdAt])
 }
 
@@ -499,4 +650,23 @@ model UserProfile {
   updatedAt DateTime @updatedAt
 
   @@index([role])
+}
+
+model EmailPreference {
+  id                      String   @id @default(cuid())
+  userId                  String?
+  email                   String   @unique
+  receiveWeeklyReport     Boolean  @default(false)
+  receiveHighSeverityAlerts Boolean @default(false)
+  receiveWatchlistAlerts  Boolean  @default(false)
+  weeklyReportDay         String   @default("friday")
+  weeklyReportTime        String   @default("09:00")
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  @@index([userId])
+  @@index([email])
+  @@index([receiveWeeklyReport])
+  @@index([receiveHighSeverityAlerts])
+  @@index([receiveWatchlistAlerts])
 }

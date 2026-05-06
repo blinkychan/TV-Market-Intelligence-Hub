@@ -1,5 +1,6 @@
 import PDFDocument from "pdfkit";
 import { NextRequest } from "next/server";
+import { toCsv } from "@/lib/csv";
 import { prisma } from "@/lib/prisma";
 import { generateWeeklyReportPayload } from "@/lib/weekly-report";
 
@@ -20,6 +21,27 @@ async function renderPdf(markdown: string) {
 
   await new Promise<void>((resolve) => doc.on("end", resolve));
   return Buffer.concat(chunks);
+}
+
+function renderCsv(markdown: string) {
+  const rows: Array<Record<string, unknown>> = [];
+  let currentSection = "Overview";
+
+  markdown.split("\n").forEach((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    if (trimmed.startsWith("## ")) {
+      currentSection = trimmed.replace(/^##\s+/, "");
+      return;
+    }
+    if (trimmed.startsWith("# ")) return;
+    rows.push({
+      section: currentSection,
+      item: trimmed.replace(/^\-\s*/, "").replace(/\*\*/g, "")
+    });
+  });
+
+  return toCsv(["section", "item"], rows);
 }
 
 export async function GET(request: NextRequest) {
@@ -49,6 +71,15 @@ export async function GET(request: NextRequest) {
       headers: {
         "content-type": "application/pdf",
         "content-disposition": `attachment; filename="${filename(title, "pdf")}"`
+      }
+    });
+  }
+
+  if (format === "csv") {
+    return new Response(renderCsv(markdown), {
+      headers: {
+        "content-type": "text/csv; charset=utf-8",
+        "content-disposition": `attachment; filename="${filename(title, "csv")}"`
       }
     });
   }

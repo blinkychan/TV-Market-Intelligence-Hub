@@ -24,6 +24,7 @@
     "date-fns": "^4.1.0",
     "lucide-react": "^0.468.0",
     "jsdom": "^25.0.1",
+    "iconv-lite": "^0.6.3",
     "next": "^15.0.3",
     "pdfkit": "^0.15.1",
     "prisma": "5.22.0",

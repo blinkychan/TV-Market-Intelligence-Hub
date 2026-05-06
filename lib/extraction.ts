@@ -1,4 +1,5 @@
 import { mockReviewArticles } from "@/lib/mock-review";
+import { calculateArticleConfidence, deriveArticleExtractionSource } from "@/lib/confidence";
 import { inferSourceReliability } from "@/lib/source-reliability";
 
 type ArticleLike = {
@@ -42,6 +43,10 @@ export type StructuredTVExtraction = {
   announcementDate: Date | null;
   premiereDate: Date | null;
   confidenceScore: number | null;
+  confidenceLevel: "high" | "medium" | "low";
+  confidenceReasons: string[];
+  extractionSource: "ai" | "heuristic" | "manual" | "headline_only";
+  bodyAvailable: boolean;
   fieldsNeedingReview: string[];
   suggestedRelationships: string | null;
   dedupeCandidate: boolean;
@@ -196,6 +201,23 @@ export async function extractStructuredTVData(
         isCoProduction: mock.extractedIsCoProduction ?? null,
         isInternational: mock.extractedIsInternational ?? null
       });
+      const extractionSource = deriveArticleExtractionSource({ mode: "mock", extractionBasis: extractionInput.basis });
+      const confidence = calculateArticleConfidence({
+        sourceReliability: inferSourceReliability(mock.publication, mock.url),
+        extractionSource: extractionInput.basis === "headline" ? "headline_only" : extractionSource,
+        bodyAvailable: Boolean(article.extractedText?.trim()),
+        extractedText: article.extractedText,
+        extractedExcerpt: article.extractedExcerpt,
+        summary: article.summary,
+        title: mock.extractedProjectTitle,
+        buyer: mock.extractedBuyer,
+        studio: mock.extractedStudio,
+        companies: mock.extractedCompanies,
+        people: mock.extractedPeople,
+        status: mock.extractedStatus,
+        country: mock.extractedCountry,
+        sourceMaterial: mock.extractedSourceMaterial ?? null
+      });
 
       return {
         title: mock.extractedProjectTitle,
@@ -215,8 +237,12 @@ export async function extractStructuredTVData(
         isInternational: flags.isInternational,
         announcementDate: normalizeDate(mock.extractedAnnouncementDate),
         premiereDate: normalizeDate(mock.extractedPremiereDate),
-        confidenceScore: clampConfidence(mock.confidenceScore, extractionInput.basis),
-        fieldsNeedingReview: mergeHeadlineWarning(parseList(mock.extractedFieldsNeedingReview), extractionInput.basis),
+        confidenceScore: confidence.score ?? clampConfidence(mock.confidenceScore, extractionInput.basis),
+        confidenceLevel: confidence.level,
+        confidenceReasons: confidence.reasons,
+        extractionSource: extractionInput.basis === "headline" ? "headline_only" : extractionSource,
+        bodyAvailable: Boolean(article.extractedText?.trim()),
+        fieldsNeedingReview: Array.from(new Set([...mergeHeadlineWarning(parseList(mock.extractedFieldsNeedingReview), extractionInput.basis), ...confidence.reasons.filter((reason) => reason.startsWith("Missing key data") || reason === "Unverified source" || reason === "Headline-only extraction")])),
         suggestedRelationships: mock.extractedRelationships,
         dedupeCandidate: mock.extractionStatus === "Duplicate" || Boolean(mock.extractedDeduplicationNotes),
         dedupeReason: mock.extractedDeduplicationNotes ?? null,
@@ -242,6 +268,25 @@ export async function extractStructuredTVData(
 
   const flags = deriveFlags(category, {});
 
+  const rawExtractionSource = deriveArticleExtractionSource({ mode: "placeholder", extractionBasis: extractionInput.basis });
+  const normalizedExtractionSource = extractionInput.basis === "headline" ? "headline_only" : rawExtractionSource;
+  const confidence = calculateArticleConfidence({
+    sourceReliability,
+    extractionSource: normalizedExtractionSource,
+    bodyAvailable: Boolean(article.extractedText?.trim()),
+    extractedText: article.extractedText,
+    extractedExcerpt: article.extractedExcerpt,
+    summary: article.summary,
+    title,
+    buyer,
+    studio: null,
+    companies: null,
+    people: null,
+    status: inferStatus(category, article.headline),
+    country: null,
+    sourceMaterial: null
+  });
+
   return {
     title,
     category,
@@ -260,8 +305,12 @@ export async function extractStructuredTVData(
     isInternational: flags.isInternational,
     announcementDate: normalizeDate(article.publishedDate),
     premiereDate: null,
-    confidenceScore,
-    fieldsNeedingReview,
+    confidenceScore: confidence.score ?? confidenceScore,
+    confidenceLevel: confidence.level,
+    confidenceReasons: confidence.reasons,
+    extractionSource: normalizedExtractionSource,
+    bodyAvailable: Boolean(article.extractedText?.trim()),
+    fieldsNeedingReview: Array.from(new Set([...fieldsNeedingReview, ...confidence.reasons.filter((reason) => reason.startsWith("Missing key data") || reason === "Unverified source" || reason === "Headline-only extraction")])),
     suggestedRelationships: buyer ? `${buyer} attached to ${title}` : null,
     dedupeCandidate: false,
     dedupeReason: null,
@@ -397,6 +446,10 @@ function normalizeAiPayload(payload: Record<string, unknown>, article: ArticleLi
     announcementDate: normalizeDate(asString(payload.announcementDate) ?? article.publishedDate ?? null),
     premiereDate: normalizeDate(asString(payload.premiereDate)),
     confidenceScore: clampConfidence(asNumber(payload.confidenceScore), extractionInput.basis),
+    confidenceLevel: "medium",
+    confidenceReasons: [],
+    extractionSource: deriveArticleExtractionSource({ mode: "ai", extractionBasis: extractionInput.basis }),
+    bodyAvailable: Boolean(article.extractedText?.trim()),
     fieldsNeedingReview: mergeHeadlineWarning(asStringArray(payload.fieldsNeedingReview), extractionInput.basis),
     suggestedRelationships: asString(payload.suggestedRelationships),
     dedupeCandidate: false,
@@ -472,5 +525,42 @@ export async function extractStructuredTVDataWithAI(article: ArticleLike): Promi
     throw new Error("OpenAI extraction returned invalid JSON.");
   }
 
-  return normalizeAiPayload(parsed, article, extractionInput);
+  const normalized = normalizeAiPayload(parsed, article, extractionInput);
+  const extractionSource = deriveArticleExtractionSource({ mode: "ai", extractionBasis: extractionInput.basis });
+  const confidence = calculateArticleConfidence({
+    sourceReliability: normalized.sourceReliability,
+    extractionSource,
+    bodyAvailable: Boolean(article.extractedText?.trim()),
+    extractedText: article.extractedText,
+    extractedExcerpt: article.extractedExcerpt,
+    summary: article.summary,
+    title: normalized.title,
+    buyer: normalized.buyer,
+    studio: normalized.studio,
+    companies: normalized.productionCompanies.join(", "),
+    people: normalized.people.join(", "),
+    status: normalized.status,
+    country: normalized.country,
+    sourceMaterial: normalized.sourceMaterial
+  });
+
+  return {
+    ...normalized,
+    confidenceScore: confidence.score,
+    confidenceLevel: confidence.level,
+    confidenceReasons: confidence.reasons,
+    extractionSource: extractionInput.basis === "headline" ? "headline_only" : extractionSource,
+    bodyAvailable: Boolean(article.extractedText?.trim()),
+    fieldsNeedingReview: Array.from(
+      new Set([
+        ...normalized.fieldsNeedingReview,
+        ...confidence.reasons.filter(
+          (reason) =>
+            reason.startsWith("Missing key data") ||
+            reason === "Unverified source" ||
+            reason === "Headline-only extraction"
+        )
+      ])
+    )
+  };
 }

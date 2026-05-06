@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { recordAuditLog } from "@/lib/audit";
 import { createBackfillJobs, runNextBackfillJob } from "@/lib/backfill";
+import { upsertSourceCoverage } from "@/lib/data-quality";
 import { logOperationalEvent } from "@/lib/ops-log";
 import { requireAdminCapabilityAccess } from "@/lib/team-auth";
 
@@ -43,6 +44,19 @@ export async function queueBackfillJobs(formData: FormData) {
 export async function runNextBackfillJobAction() {
   await requireAdminCapabilityAccess();
   const summary = await runNextBackfillJob("auto");
+  if (summary.source) {
+    await upsertSourceCoverage({
+      sourceName: summary.source,
+      sourceType: "search_api",
+      enabled: true,
+      checkedAt: new Date(),
+      successAt: summary.status === "completed" ? new Date() : null,
+      articlesFetchedLastRun: summary.articlesFound,
+      articlesSavedLastRun: summary.articlesSaved,
+      incrementFailures: summary.status === "failed",
+      notes: summary.message
+    });
+  }
   await recordAuditLog({
     entityType: "Article",
     entityId: `backfill-run-${summary.source ?? "unknown"}-${summary.year ?? "na"}-${summary.month ?? "na"}`,

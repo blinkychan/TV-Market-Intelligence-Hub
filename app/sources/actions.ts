@@ -3,12 +3,14 @@
 import { revalidatePath } from "next/cache";
 import { randomUUID } from "node:crypto";
 import { recordAuditLog } from "@/lib/audit";
+import { upsertSourceCoverage } from "@/lib/data-quality";
 import { appendMockIngestionResult } from "@/lib/mock-preview-store";
 import { logOperationalEvent } from "@/lib/ops-log";
 import { prisma } from "@/lib/prisma";
 import { ingestRSSFeeds } from "@/lib/rss-ingestion";
 import { inferSourceReliability } from "@/lib/source-reliability";
 import { requireAdminCapabilityAccess } from "@/lib/team-auth";
+import { triggerWatchlistAlertsForEntity } from "@/lib/watchlists";
 
 function safeHost(urlValue: string) {
   try {
@@ -43,6 +45,14 @@ export async function saveRssFeed(formData: FormData) {
       enabled
     }
   }).catch(() => {});
+  await upsertSourceCoverage({
+    sourceName: publicationName,
+    sourceType: "rss",
+    enabled,
+    checkedAt: undefined,
+    sourceReliability: inferSourceReliability(publicationName, feedUrl),
+    notes: category
+  });
 
   revalidatePath("/sources");
   revalidatePath("/admin/status");
@@ -117,6 +127,27 @@ export async function addManualArticle(formData: FormData) {
       newValueJson: { ingestionRunId: run.id, url },
       reason: "Manual article queued for review.",
       source: "manual_url"
+    });
+    await triggerWatchlistAlertsForEntity({
+      entityType: "Article",
+      entityId: article.id,
+      title: article.headline,
+      genre: article.suspectedCategory,
+      source: article.publication,
+      status: article.extractionStatus,
+      url: article.url,
+      keywordText: [article.summary, article.extractedExcerpt].filter(Boolean).join(" ")
+    });
+    await upsertSourceCoverage({
+      sourceName: publication,
+      sourceType: "trade",
+      enabled: true,
+      checkedAt: new Date(),
+      successAt: new Date(),
+      articlesFetchedLastRun: 1,
+      articlesSavedLastRun: 1,
+      sourceReliability: inferSourceReliability(publication, url),
+      notes: "Manual article URL entry."
     });
   } catch {
     await appendMockIngestionResult({

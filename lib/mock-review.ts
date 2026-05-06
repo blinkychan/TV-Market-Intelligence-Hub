@@ -20,6 +20,9 @@ export type MockReviewArticle = {
   extractionMode?: string | null;
   suspectedCategory: string | null;
   confidenceScore: number | null;
+  extractionConfidence?: number | null;
+  extractionSource?: string | null;
+  bodyAvailable?: boolean | null;
   summary: string | null;
   linkedProjectId: string | null;
   linkedProjectTitle: string | null;

@@ -12,10 +12,13 @@ import {
   SortingState,
   useReactTable
 } from "@tanstack/react-table";
-import { ArrowDown, ArrowUp, ChevronsUpDown, ChevronDown, ChevronRight, ExternalLink, Search } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronsUpDown, ChevronDown, ChevronRight, Download, ExternalLink, Search, Upload } from "lucide-react";
+import { BulkEditPanel } from "@/components/shared/bulk-edit-panel";
 import { SavedViewsPanel } from "@/components/shared/saved-views-panel";
 import { Badge, StatusBadge } from "@/components/ui/badge";
+import { ButtonLink } from "@/components/ui/button";
 import { Input, Select } from "@/components/ui/input";
+import { confidenceTone, parseConfidenceReasons } from "@/lib/confidence";
 import { Table, Td, Th } from "@/components/ui/table";
 import type { SavedViewRecord } from "@/lib/saved-views";
 import { formatDate, humanize } from "@/lib/utils";
@@ -43,6 +46,8 @@ export type DevelopmentRow = {
   sourceUrl: string | null;
   sourcePublication: string | null;
   confidenceScore: number;
+  confidenceLevel: string;
+  confidenceReasons: string | null;
   needsReview: boolean;
   notes: string | null;
 };
@@ -83,7 +88,10 @@ export function DevelopmentTable({
   currentUserEmail = null,
   canCreateTeamView = false,
   canManageAllSavedViews = false,
-  canWriteSavedViews = true
+  canWriteSavedViews = true,
+  canBulkEdit = false,
+  canArchive = false,
+  initialFilters
 }: {
   rows: DevelopmentRow[];
   savedViewsData?: SavedViewRecord[];
@@ -91,20 +99,39 @@ export function DevelopmentTable({
   canCreateTeamView?: boolean;
   canManageAllSavedViews?: boolean;
   canWriteSavedViews?: boolean;
+  canBulkEdit?: boolean;
+  canArchive?: boolean;
+  initialFilters?: Partial<{
+    savedView: string;
+    globalFilter: string;
+    status: string;
+    buyer: string;
+    studio: string;
+    genre: string;
+    year: string;
+    country: string;
+    acquisition: string;
+    coProduction: string;
+    international: string;
+    needsReview: string;
+    confidence: string;
+  }>;
 }) {
-  const [globalFilter, setGlobalFilter] = useState("");
+  const [globalFilter, setGlobalFilter] = useState(initialFilters?.globalFilter ?? "");
   const [sorting, setSorting] = useState<SortingState>([{ id: "announcementDate", desc: true }]);
-  const [savedView, setSavedView] = useState("current");
-  const [status, setStatus] = useState("all");
-  const [buyer, setBuyer] = useState("all");
-  const [studio, setStudio] = useState("all");
-  const [genre, setGenre] = useState("all");
-  const [year, setYear] = useState("all");
-  const [country, setCountry] = useState("all");
-  const [acquisition, setAcquisition] = useState("all");
-  const [coProduction, setCoProduction] = useState("all");
-  const [international, setInternational] = useState("all");
-  const [needsReview, setNeedsReview] = useState("all");
+  const [savedView, setSavedView] = useState(initialFilters?.savedView ?? "current");
+  const [status, setStatus] = useState(initialFilters?.status ?? "all");
+  const [buyer, setBuyer] = useState(initialFilters?.buyer ?? "all");
+  const [studio, setStudio] = useState(initialFilters?.studio ?? "all");
+  const [genre, setGenre] = useState(initialFilters?.genre ?? "all");
+  const [year, setYear] = useState(initialFilters?.year ?? "all");
+  const [country, setCountry] = useState(initialFilters?.country ?? "all");
+  const [acquisition, setAcquisition] = useState(initialFilters?.acquisition ?? "all");
+  const [coProduction, setCoProduction] = useState(initialFilters?.coProduction ?? "all");
+  const [international, setInternational] = useState(initialFilters?.international ?? "all");
+  const [needsReview, setNeedsReview] = useState(initialFilters?.needsReview ?? "all");
+  const [confidence, setConfidence] = useState(initialFilters?.confidence ?? "all");
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   function applySavedView(view: SavedViewRecord) {
     const filters = (view.filtersJson ?? {}) as Record<string, unknown>;
@@ -120,6 +147,7 @@ export function DevelopmentTable({
     setCoProduction(String(filters.coProduction ?? "all"));
     setInternational(String(filters.international ?? "all"));
     setNeedsReview(String(filters.needsReview ?? "all"));
+    setConfidence(String(filters.confidence ?? "all"));
   }
 
   const filteredRows = useMemo(
@@ -136,13 +164,31 @@ export function DevelopmentTable({
         if (!booleanFilterMatches(row.isCoProduction, coProduction)) return false;
         if (!booleanFilterMatches(row.isInternational, international)) return false;
         if (!booleanFilterMatches(row.needsReview, needsReview)) return false;
+        if (confidence !== "all" && row.confidenceLevel !== confidence) return false;
         return true;
       }),
-    [rows, savedView, status, buyer, studio, genre, year, country, acquisition, coProduction, international, needsReview]
+    [rows, savedView, status, buyer, studio, genre, year, country, acquisition, coProduction, international, needsReview, confidence]
   );
 
   const columns = useMemo<ColumnDef<DevelopmentRow>[]>(
     () => [
+      {
+        id: "select",
+        header: "",
+        enableSorting: false,
+        cell: ({ row }) => (
+          <input
+            type="checkbox"
+            checked={selectedIds.includes(row.original.id)}
+            onChange={(event) =>
+              setSelectedIds((current) =>
+                event.target.checked ? Array.from(new Set([...current, row.original.id])) : current.filter((id) => id !== row.original.id)
+              )
+            }
+            aria-label={`Select ${row.original.title}`}
+          />
+        )
+      },
       {
         id: "expand",
         header: "",
@@ -202,6 +248,7 @@ export function DevelopmentTable({
         enableSorting: false,
         cell: ({ row }) => (
           <div className="flex flex-wrap gap-1">
+            <Badge className={confidenceTone(row.original.confidenceLevel)}>{humanize(row.original.confidenceLevel)} confidence</Badge>
             {row.original.isAcquisition ? <Badge className="bg-orange-50 text-orange-700 ring-orange-200">Acq</Badge> : null}
             {row.original.isCoProduction ? <Badge className="bg-teal-50 text-teal-700 ring-teal-200">Co-Pro</Badge> : null}
             {row.original.isInternational ? <Badge className="bg-sky-50 text-sky-700 ring-sky-200">Intl</Badge> : null}
@@ -210,7 +257,7 @@ export function DevelopmentTable({
         )
       }
     ],
-    []
+    [selectedIds]
   );
 
   const table = useReactTable({
@@ -258,6 +305,29 @@ export function DevelopmentTable({
     (a, b) => Number(b) - Number(a)
   );
 
+  const exportHref = useMemo(() => {
+    const params = new URLSearchParams({
+      pageType: "development_tracker",
+      savedView,
+      q: globalFilter,
+      status,
+      buyer,
+      studio,
+      genre,
+      year,
+      country,
+      acquisition,
+      coProduction,
+      international,
+      needsReview,
+      confidence
+    });
+    Array.from(params.entries()).forEach(([key, value]) => {
+      if (!value || value === "all") params.delete(key);
+    });
+    return `/api/export?${params.toString()}`;
+  }, [savedView, globalFilter, status, buyer, studio, genre, year, country, acquisition, coProduction, international, needsReview, confidence]);
+
   return (
     <div className="space-y-4">
       <SavedViewsPanel
@@ -277,7 +347,8 @@ export function DevelopmentTable({
             acquisition,
             coProduction,
             international,
-            needsReview
+            needsReview,
+            confidence
           },
           sortJson: sorting
         }}
@@ -304,6 +375,17 @@ export function DevelopmentTable({
       </div>
 
       <div className="rounded-lg border bg-white p-4 shadow-panel">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div className="text-sm font-medium text-muted-foreground">Move quickly between saved views, export the exact slice you’re looking at, or stage a manual import.</div>
+          <div className="flex flex-wrap gap-2">
+            <ButtonLink href={exportHref} variant="secondary">
+              <Download className="h-4 w-4" /> Export CSV
+            </ButtonLink>
+            <ButtonLink href="/sources/import" variant="ghost">
+              <Upload className="h-4 w-4" /> Import CSV
+            </ButtonLink>
+          </div>
+        </div>
         <div className="grid gap-3 md:grid-cols-4 xl:grid-cols-8">
           <div className="relative md:col-span-2">
             <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
@@ -358,13 +440,23 @@ export function DevelopmentTable({
             <option value="yes">Review: Needs Review</option>
             <option value="no">Review: Cleared</option>
           </Select>
+          <Select value={confidence} onChange={(event) => setConfidence(event.target.value)}>
+            <option value="all">Confidence: All</option>
+            <option value="high">Confidence: High</option>
+            <option value="medium">Confidence: Medium</option>
+            <option value="low">Confidence: Low</option>
+          </Select>
         </div>
       </div>
+
+      {canBulkEdit ? <BulkEditPanel entityType="Project" selectedIds={selectedIds} canEdit={canBulkEdit} canArchive={canArchive} /> : null}
 
       <div className="overflow-hidden rounded-lg border bg-white shadow-panel">
         <div className="flex items-center justify-between border-b bg-slate-50 px-4 py-3">
           <div className="text-sm font-medium">{table.getRowModel().rows.length} projects shown</div>
-          <div className="text-xs text-muted-foreground">Saved view: {savedViews.find((view) => view.id === savedView)?.label}</div>
+          <div className="text-xs text-muted-foreground">
+            Saved view: {savedViews.find((view) => view.id === savedView)?.label} · {selectedIds.length} selected
+          </div>
         </div>
         <div className="overflow-x-auto">
           <Table>
@@ -438,7 +530,14 @@ export function DevelopmentTable({
                           </div>
                           <div>
                             <div className="text-xs font-semibold uppercase text-muted-foreground">Confidence</div>
-                            <p className="mt-1 text-sm">{Math.round(row.original.confidenceScore * 100)}%</p>
+                            <div className="mt-1 flex flex-wrap items-center gap-2">
+                              <Badge className={confidenceTone(row.original.confidenceLevel)}>
+                                {humanize(row.original.confidenceLevel)} · {Math.round(row.original.confidenceScore * 100)}%
+                              </Badge>
+                            </div>
+                            <p className="mt-2 text-sm text-muted-foreground">
+                              {parseConfidenceReasons(row.original.confidenceReasons).join(", ") || "No confidence notes yet."}
+                            </p>
                           </div>
                           <div className="md:col-span-2">
                             <div className="text-xs font-semibold uppercase text-muted-foreground">Notes</div>

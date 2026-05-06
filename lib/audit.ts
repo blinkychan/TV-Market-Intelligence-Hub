@@ -13,7 +13,10 @@ export type AuditEntityType =
   | "Relationship"
   | "WeeklyReport"
   | "SavedView"
-  | "TeamNote";
+  | "TeamNote"
+  | "Watchlist"
+  | "Alert"
+  | "EmailPreference";
 
 export type AuditAction =
   | "created"

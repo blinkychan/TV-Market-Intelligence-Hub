@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
 import Parser from "rss-parser";
+import { detectArticleMissingData, syncMissingDataFlags, upsertSourceCoverage } from "@/lib/data-quality";
 import { FEEDS } from "@/lib/feeds";
 import { appendMockIngestionResult, readMockPreviewState } from "@/lib/mock-preview-store";
 import { mockFeedEntries } from "@/lib/mock-rss";
 import { prisma } from "@/lib/prisma";
 import { inferSourceReliability } from "@/lib/source-reliability";
+import { triggerWatchlistAlertsForEntity } from "@/lib/watchlists";
 
 const parser = new Parser();
 
@@ -132,8 +134,11 @@ export async function ingestRSSFeeds(mode: IngestionMode = "real"): Promise<Inge
     const previewUrls = new Set(previewState.reviewArticles.map((article) => article.url));
 
     for (const feed of mockFeedEntries) {
+      let feedFetched = 0;
+      let feedSaved = 0;
       for (const item of feed.items) {
         fetched += 1;
+        feedFetched += 1;
         if (!isRelevantHeadline(item.title)) continue;
 
         const url = normalizeUrl(item.url);
@@ -144,6 +149,7 @@ export async function ingestRSSFeeds(mode: IngestionMode = "real"): Promise<Inge
 
         previewUrls.add(url);
         saved += 1;
+        feedSaved += 1;
         articles.push({
           id: randomUUID(),
           headline: item.title,
@@ -183,6 +189,17 @@ export async function ingestRSSFeeds(mode: IngestionMode = "real"): Promise<Inge
           extractedRelationships: null
         });
       }
+      await upsertSourceCoverage({
+        sourceName: feed.publication,
+        sourceType: "rss",
+        enabled: true,
+        checkedAt: new Date(),
+        successAt: new Date(),
+        articlesFetchedLastRun: feedFetched,
+        articlesSavedLastRun: feedSaved,
+        sourceReliability: inferSourceReliability(feed.publication, feed.items[0]?.url ?? null),
+        notes: "Mock RSS preview source."
+      });
     }
 
     const completedAt = new Date();
@@ -200,7 +217,7 @@ export async function ingestRSSFeeds(mode: IngestionMode = "real"): Promise<Inge
         }
         existingUrls.add(article.url);
         dbSaved += 1;
-        await prisma.article.create({
+        const created = await prisma.article.create({
           data: {
             url: article.url,
             headline: article.headline,
@@ -224,6 +241,31 @@ export async function ingestRSSFeeds(mode: IngestionMode = "real"): Promise<Inge
             suspectedCategory: article.suspectedCategory,
             confidenceScore: article.confidenceScore
           }
+        });
+        await syncMissingDataFlags(
+          detectArticleMissingData({
+            id: created.id,
+            url: created.url,
+            extractedText: created.extractedText,
+            extractedExcerpt: created.extractedExcerpt,
+            extractedBuyer: created.extractedBuyer,
+            extractedStudio: created.extractedStudio,
+            extractionSource: created.extractionSource,
+            extractionConfidence: created.extractionConfidence,
+            confidenceScore: created.confidenceScore
+          }),
+          "Article",
+          created.id
+        );
+        await triggerWatchlistAlertsForEntity({
+          entityType: "Article",
+          entityId: created.id,
+          title: created.headline,
+          genre: created.suspectedCategory,
+          source: created.publication,
+          status: created.extractionStatus,
+          url: created.url,
+          keywordText: [created.summary, created.extractedExcerpt].filter(Boolean).join(" ")
         });
       }
 
@@ -292,6 +334,7 @@ export async function ingestRSSFeeds(mode: IngestionMode = "real"): Promise<Inge
   let relevant = 0;
 
   for (const feed of feeds) {
+    let feedSaved = 0;
     const items = await fetchFeedItems(feed);
     fetched += items.length;
 
@@ -305,7 +348,7 @@ export async function ingestRSSFeeds(mode: IngestionMode = "real"): Promise<Inge
         continue;
       }
 
-      await prisma.article.create({
+      const created = await prisma.article.create({
         data: {
           url: item.url,
           headline: item.title,
@@ -330,13 +373,50 @@ export async function ingestRSSFeeds(mode: IngestionMode = "real"): Promise<Inge
           confidenceScore: 0.6
         }
       });
+      await syncMissingDataFlags(
+        detectArticleMissingData({
+          id: created.id,
+          url: created.url,
+          extractedText: created.extractedText,
+          extractedExcerpt: created.extractedExcerpt,
+          extractedBuyer: created.extractedBuyer,
+          extractedStudio: created.extractedStudio,
+          extractionSource: created.extractionSource,
+          extractionConfidence: created.extractionConfidence,
+          confidenceScore: created.confidenceScore
+        }),
+        "Article",
+        created.id
+      );
+      await triggerWatchlistAlertsForEntity({
+        entityType: "Article",
+        entityId: created.id,
+        title: created.headline,
+        genre: created.suspectedCategory,
+        source: created.publication,
+        status: created.extractionStatus,
+        url: created.url,
+        keywordText: [created.summary, created.extractedExcerpt].filter(Boolean).join(" ")
+      });
 
       saved += 1;
+      feedSaved += 1;
     }
 
     await prisma.rssFeed.updateMany({
       where: { feedUrl: feed.feedUrl },
       data: { lastChecked: new Date() }
+    });
+    await upsertSourceCoverage({
+      sourceName: feed.publicationName,
+      sourceType: "rss",
+      enabled: feed.enabled,
+      checkedAt: new Date(),
+      successAt: new Date(),
+      articlesFetchedLastRun: items.length,
+      articlesSavedLastRun: feedSaved,
+      sourceReliability: inferSourceReliability(feed.publicationName, feed.feedUrl),
+      notes: feed.category
     });
 
     await sleep(400);

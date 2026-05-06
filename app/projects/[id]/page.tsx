@@ -4,8 +4,9 @@ import { ArrowLeft, ExternalLink } from "lucide-react";
 import { ChangeHistoryPanel } from "@/components/audit/change-history";
 import { TeamNotesPanel } from "@/components/shared/team-notes-panel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { StatusBadge } from "@/components/ui/badge";
+import { Badge, StatusBadge } from "@/components/ui/badge";
 import { getAuditHistory } from "@/lib/audit";
+import { confidenceTone, parseConfidenceReasons } from "@/lib/confidence";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUserContext } from "@/lib/team-auth";
 import { getTeamNotes } from "@/lib/team-notes";
@@ -81,7 +82,15 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
             <div className="flex justify-between"><span>Co-production</span><strong>{project.isCoProduction ? "Yes" : "No"}</strong></div>
             <div className="flex justify-between"><span>International</span><strong>{project.isInternational ? "Yes" : "No"}</strong></div>
             <div className="flex justify-between"><span>Needs review</span><strong>{project.needsReview ? "Yes" : "No"}</strong></div>
-            <div className="flex justify-between"><span>Confidence</span><strong>{Math.round(project.confidenceScore * 100)}%</strong></div>
+            <div className="space-y-2">
+              <div className="flex justify-between"><span>Confidence</span><strong>{Math.round(project.confidenceScore * 100)}%</strong></div>
+              <Badge className={confidenceTone(project.confidenceLevel)}>
+                {humanize(project.confidenceLevel)} confidence
+              </Badge>
+              <p className="text-xs text-muted-foreground">
+                {parseConfidenceReasons(project.confidenceReasons).join(", ") || "No confidence notes yet."}
+              </p>
+            </div>
           </CardContent>
         </Card>
       </section>

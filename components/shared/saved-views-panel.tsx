@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Copy, Save, Trash2 } from "lucide-react";
-import { deleteSavedViewAction, duplicateSavedViewAction, saveSavedViewAction } from "@/app/shared-actions";
+import { deleteSavedViewAction, duplicateSavedViewAction, saveSavedViewAction, saveWatchlistAction } from "@/app/shared-actions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -18,7 +18,8 @@ export function SavedViewsPanel({
   onLoadView,
   canWrite = true,
   currentUserEmail,
-  canManageAll = false
+  canManageAll = false,
+  watchlistPageType
 }: {
   pageType: string;
   savedViews: SavedViewRecord[];
@@ -29,12 +30,16 @@ export function SavedViewsPanel({
   canWrite?: boolean;
   currentUserEmail?: string | null;
   canManageAll?: boolean;
+  watchlistPageType?: string;
 }) {
   const [selectedId, setSelectedId] = useState(savedViews[0]?.id ?? "");
   const [editingId, setEditingId] = useState("");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [visibility, setVisibility] = useState<"private" | "team">("private");
+  const [watchlistName, setWatchlistName] = useState("");
+  const [watchlistVisibility, setWatchlistVisibility] = useState<"private" | "team">("private");
+  const [watchType, setWatchType] = useState("keyword");
   const selected = useMemo(() => savedViews.find((view) => view.id === selectedId) ?? null, [savedViews, selectedId]);
   const canEditSelected = Boolean(
     selected &&
@@ -115,9 +120,47 @@ export function SavedViewsPanel({
             <Save className="h-4 w-4" /> {editingId ? "Update View" : "Save View"}
           </Button>
         </form>
+        <form action={saveWatchlistAction} className="grid gap-3 md:grid-cols-[1fr_0.8fr_0.7fr_auto]">
+          <input type="hidden" name="returnPath" value="/watchlists" />
+          <input
+            type="hidden"
+            name="criteriaJson"
+            value={JSON.stringify({ pageType: watchlistPageType ?? pageType, filters: currentState.filtersJson ?? {} })}
+          />
+          <Input
+            name="name"
+            placeholder="Save current filters as watchlist..."
+            value={watchlistName}
+            onChange={(event) => setWatchlistName(event.target.value)}
+            disabled={!canWrite}
+            required
+          />
+          <Select name="watchType" value={watchType} onChange={(event) => setWatchType(event.target.value)} disabled={!canWrite}>
+            <option value="keyword">Keyword</option>
+            <option value="buyer">Buyer</option>
+            <option value="company">Company</option>
+            <option value="person">Person</option>
+            <option value="genre">Genre</option>
+            <option value="source">Source</option>
+            <option value="status">Status</option>
+            <option value="country">Country</option>
+          </Select>
+          <Select
+            name="visibility"
+            value={watchlistVisibility}
+            onChange={(event) => setWatchlistVisibility(event.target.value as "private" | "team")}
+            disabled={!canWrite}
+          >
+            <option value="private">Private</option>
+            <option value="team" disabled={!canManageAll}>Team</option>
+          </Select>
+          <Button type="submit" variant="secondary" disabled={!canWrite}>
+            <Save className="h-4 w-4" /> Save Watchlist
+          </Button>
+        </form>
         {!canWrite ? (
           <div className="text-xs text-muted-foreground">
-            Saved views are read-only in preview mode. Connect the database to save or update views.
+            Saved views and watchlists are read-only in preview mode. Connect the database to save or update them.
           </div>
         ) : null}
 

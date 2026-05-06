@@ -3,6 +3,7 @@ import { mockAuditLogs } from "@/lib/mock-audit";
 import { defaultCurrentTvSources, type CurrentTvSourceRecord } from "@/lib/current-tv-sources";
 import { mockBuyerDetails } from "@/lib/mock-buyers";
 import { mockCurrentShows } from "@/lib/mock-current-tv";
+import { calculateCurrentShowConfidence, joinConfidenceReasons } from "@/lib/confidence";
 import { prisma } from "@/lib/prisma";
 import { getSavedViewsForPage } from "@/lib/saved-views";
 import { getCurrentUserContext } from "@/lib/team-auth";
@@ -58,6 +59,28 @@ async function getCurrentShows(): Promise<{ rows: CurrentTvRow[]; sources: Curre
         notes: source.notes
       })),
       rows: shows.map((show: typeof shows[number]) => ({
+        ...(() => {
+          const confidence = calculateCurrentShowConfidence({
+            sourceReliability: show.sourceReliability,
+            title: show.title,
+            networkOrPlatform: show.networkOrPlatform,
+            premiereDate: show.premiereDate,
+            finaleDate: show.finaleDate,
+            studio: show.studio,
+            productionCompanies: show.productionCompanies,
+            genre: show.genre,
+            country: show.country,
+            sourceUrl: show.sourceUrl,
+            verifiedAt: show.verifiedAt,
+            needsVerification: show.needsVerification,
+            notes: show.notes
+          });
+          return {
+            confidenceScore: show.confidenceScore ?? confidence.score,
+            confidenceLevel: show.confidenceLevel ?? confidence.level,
+            confidenceReasons: show.confidenceReasons ?? joinConfidenceReasons(confidence.reasons)
+          };
+        })(),
         id: show.id,
         title: show.title,
         networkOrPlatform: show.networkOrPlatform,
@@ -102,7 +125,12 @@ async function getCurrentShows(): Promise<{ rows: CurrentTvRow[]; sources: Curre
   }
 }
 
-export default async function CurrentTvPage() {
+export default async function CurrentTvPage({
+  searchParams
+}: {
+  searchParams: Promise<Record<string, string | undefined>>;
+}) {
+  const params = await searchParams;
   const { rows, sources, dataSource, errorMessage } = await getCurrentShows();
   const auth = await getCurrentUserContext();
   const savedViews = await getSavedViewsForPage("current_tv_tracker").catch(() => []);
@@ -123,11 +151,26 @@ export default async function CurrentTvPage() {
         dataSource={dataSource}
         errorMessage={errorMessage}
         canEdit={canEdit}
+        canArchive={auth.canManageUsers || auth.adminUnlocked}
         currentUserEmail={auth.user?.email ?? null}
         canManageAllNotes={auth.canManageUsers || auth.adminUnlocked}
         savedViewsData={savedViews}
         canCreateTeamView={auth.canEditContent || auth.adminUnlocked}
         canManageAllSavedViews={auth.canManageUsers || auth.adminUnlocked}
+        initialFilters={{
+          mode: params.mode === "calendar" ? "calendar" : "table",
+          savedView: params.view,
+          calendarWindow: params.calendarWindow,
+          query: params.q,
+          platform: params.platform,
+          premiereFrom: params.premiereFrom,
+          premiereTo: params.premiereTo,
+          genre: params.genre,
+          studio: params.studio,
+          status: params.status,
+          country: params.country,
+          confidence: params.confidence
+        }}
       />
     </div>
   );

@@ -2,9 +2,10 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { Building2, Radio, TrendingUp } from "lucide-react";
+import { Building2, Download, Radio, TrendingUp } from "lucide-react";
 import { SavedViewsPanel } from "@/components/shared/saved-views-panel";
 import { Badge } from "@/components/ui/badge";
+import { ButtonLink } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { BuyerListItem } from "@/components/buyers/types";
 import { Input, Select } from "@/components/ui/input";
@@ -43,6 +44,12 @@ export function BuyerList({
   );
 
   const buyerTypes = Array.from(new Set(buyers.map((buyer) => buyer.type))).sort();
+  const exportHref = useMemo(() => {
+    const params = new URLSearchParams({ pageType: "buyers", query, type });
+    if (!query) params.delete("query");
+    if (type === "all") params.delete("type");
+    return `/api/export?${params.toString()}`;
+  }, [query, type]);
 
   function applySavedView(view: SavedViewRecord) {
     const filters = (view.filtersJson ?? {}) as Record<string, unknown>;
@@ -68,9 +75,14 @@ export function BuyerList({
           <div className="font-semibold">{filteredBuyers.length} buyers tracked</div>
           <p className="text-sm text-muted-foreground">Development, current shows, acquisitions, and international activity by buyer.</p>
         </div>
-        <Badge className={dataSource === "database" ? "bg-emerald-50 text-emerald-700 ring-emerald-200" : "bg-amber-50 text-amber-800 ring-amber-200"}>
-          Data Source: {dataSource === "database" ? "Database" : "Mock Preview Data"}
-        </Badge>
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge className={dataSource === "database" ? "bg-emerald-50 text-emerald-700 ring-emerald-200" : "bg-amber-50 text-amber-800 ring-amber-200"}>
+            Data Source: {dataSource === "database" ? "Database" : "Mock Preview Data"}
+          </Badge>
+          <ButtonLink href={exportHref} variant="secondary">
+            <Download className="h-4 w-4" /> Export CSV
+          </ButtonLink>
+        </div>
       </div>
       {errorMessage ? (
         <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">

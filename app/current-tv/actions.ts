@@ -3,8 +3,16 @@
 import { revalidatePath } from "next/cache";
 import { CurrentShowSeasonType } from "@prisma/client";
 import { recordAuditLog } from "@/lib/audit";
+import { calculateCurrentShowConfidence, joinConfidenceReasons } from "@/lib/confidence";
+import { detectCurrentShowMissingData, syncMissingDataFlags } from "@/lib/data-quality";
 import { prisma } from "@/lib/prisma";
 import { requireEditorActionAccess } from "@/lib/team-auth";
+import {
+  triggerLowConfidenceAlert,
+  triggerPremiereUpdateAlert,
+  triggerStatusChangeAlert,
+  triggerWatchlistAlertsForEntity
+} from "@/lib/watchlists";
 
 function parseDate(value: FormDataEntryValue | null) {
   const text = String(value ?? "").trim();
@@ -61,6 +69,40 @@ async function findDuplicateCurrentShow(args: {
   }).catch(() => null);
 }
 
+function buildCurrentShowConfidenceData(data: {
+  sourceReliability?: string | null;
+  title: string;
+  networkOrPlatform: string;
+  premiereDate: Date | null;
+  finaleDate: Date | null;
+  studio?: string | null;
+  productionCompanies?: string | null;
+  genre?: string | null;
+  country?: string | null;
+  sourceUrl?: string | null;
+  verifiedAt?: Date | null;
+  needsVerification?: boolean | null;
+  notes?: string | null;
+  humanEdited?: boolean;
+}) {
+  const confidence = calculateCurrentShowConfidence(data);
+  return {
+    confidenceScore: confidence.score,
+    confidenceLevel: confidence.level,
+    confidenceReasons: joinConfidenceReasons(confidence.reasons)
+  };
+}
+
+async function syncCurrentShowFlags(show: {
+  id: string;
+  premiereDate?: Date | null;
+  sourceUrl?: string | null;
+  confidenceLevel?: string | null;
+  productionCompanies?: string | null;
+}) {
+  await syncMissingDataFlags(detectCurrentShowMissingData(show), "CurrentShow", show.id);
+}
+
 export async function saveCurrentShowAction(formData: FormData) {
   await requireEditorActionAccess();
 
@@ -93,6 +135,7 @@ export async function saveCurrentShowAction(formData: FormData) {
     needsVerification: parseCheckbox(formData.get("needsVerification")),
     verifiedAt: parseDate(formData.get("verifiedAt"))
   };
+  const confidenceData = buildCurrentShowConfidenceData({ ...data, humanEdited: true });
 
   const duplicate = await findDuplicateCurrentShow({
     title: data.title,
@@ -104,8 +147,28 @@ export async function saveCurrentShowAction(formData: FormData) {
 
   if (id) {
     const previous = await prisma.currentShow.findUnique({ where: { id } }).catch(() => null);
-    const updated = await prisma.currentShow.update({ where: { id }, data }).catch(() => null);
+    const updated = await prisma.currentShow.update({ where: { id }, data: { ...data, ...confidenceData } }).catch(() => null);
     if (updated) {
+      await syncCurrentShowFlags(updated);
+      await triggerStatusChangeAlert({
+        entityType: "CurrentShow",
+        entityId: updated.id,
+        label: updated.title,
+        previousStatus: previous?.status,
+        nextStatus: updated.status
+      });
+      await triggerPremiereUpdateAlert({
+        entityId: updated.id,
+        label: updated.title,
+        previousPremiereDate: previous?.premiereDate,
+        nextPremiereDate: updated.premiereDate
+      });
+      await triggerLowConfidenceAlert({
+        entityType: "CurrentShow",
+        entityId: updated.id,
+        label: updated.title,
+        confidenceLevel: updated.confidenceLevel
+      });
       await recordAuditLog({
         entityType: "CurrentShow",
         entityId: updated.id,
@@ -117,8 +180,28 @@ export async function saveCurrentShowAction(formData: FormData) {
       });
     }
   } else {
-    const created = await prisma.currentShow.create({ data }).catch(() => null);
+    const created = await prisma.currentShow.create({ data: { ...data, ...confidenceData } }).catch(() => null);
     if (created) {
+      await syncCurrentShowFlags(created);
+      await triggerWatchlistAlertsForEntity({
+        entityType: "CurrentShow",
+        entityId: created.id,
+        title: created.title,
+        buyer: created.networkOrPlatform,
+        company: created.studio,
+        genre: created.genre,
+        source: created.sourceType ?? created.sourceUrl,
+        status: created.status,
+        country: created.country,
+        keywordText: [created.productionCompanies, created.notes, created.episodeTitle].filter(Boolean).join(" "),
+        url: created.sourceUrl
+      });
+      await triggerLowConfidenceAlert({
+        entityType: "CurrentShow",
+        entityId: created.id,
+        label: created.title,
+        confidenceLevel: created.confidenceLevel
+      });
       await recordAuditLog({
         entityType: "CurrentShow",
         entityId: created.id,
@@ -145,11 +228,28 @@ export async function markPremiereVerifiedAction(formData: FormData) {
     where: { id },
     data: {
       verifiedAt: new Date(),
-      needsVerification: false
+      needsVerification: false,
+      ...buildCurrentShowConfidenceData({
+        sourceReliability: previous?.sourceReliability ?? null,
+        title: previous?.title ?? "",
+        networkOrPlatform: previous?.networkOrPlatform ?? "",
+        premiereDate: previous?.premiereDate ?? null,
+        finaleDate: previous?.finaleDate ?? null,
+        studio: previous?.studio ?? null,
+        productionCompanies: previous?.productionCompanies ?? null,
+        genre: previous?.genre ?? null,
+        country: previous?.country ?? null,
+        sourceUrl: previous?.sourceUrl ?? null,
+        verifiedAt: new Date(),
+        needsVerification: false,
+        notes: previous?.notes ?? null,
+        humanEdited: true
+      })
     }
   }).catch(() => null);
 
   if (updated) {
+    await syncCurrentShowFlags(updated);
     await recordAuditLog({
       entityType: "CurrentShow",
       entityId: updated.id,
@@ -181,11 +281,28 @@ export async function flagPremiereConflictAction(formData: FormData) {
     where: { id },
     data: {
       needsVerification: true,
-      notes: mergedNote
+      notes: mergedNote,
+      ...buildCurrentShowConfidenceData({
+        sourceReliability: previous?.sourceReliability ?? null,
+        title: previous?.title ?? "",
+        networkOrPlatform: previous?.networkOrPlatform ?? "",
+        premiereDate: previous?.premiereDate ?? null,
+        finaleDate: previous?.finaleDate ?? null,
+        studio: previous?.studio ?? null,
+        productionCompanies: previous?.productionCompanies ?? null,
+        genre: previous?.genre ?? null,
+        country: previous?.country ?? null,
+        sourceUrl: previous?.sourceUrl ?? null,
+        verifiedAt: previous?.verifiedAt ?? null,
+        needsVerification: true,
+        notes: mergedNote,
+        humanEdited: true
+      })
     }
   }).catch(() => null);
 
   if (updated) {
+    await syncCurrentShowFlags(updated);
     await recordAuditLog({
       entityType: "CurrentShow",
       entityId: updated.id,
@@ -242,6 +359,14 @@ export async function importCurrentShowsCsvAction(formData: FormData) {
     if (!title || !networkOrPlatform) continue;
 
     const safePremiereDate = parseImportedDate(row.premiereDate ?? null);
+    const safeFinaleDate = parseImportedDate(row.finaleDate ?? null);
+    const sourceReliability = String(row.sourceReliability ?? "").trim() || "high";
+    const studio = String(row.studio ?? "").trim() || null;
+    const productionCompanies = String(row.productionCompanies ?? "").trim() || null;
+    const genre = String(row.genre ?? "").trim() || null;
+    const country = String(row.country ?? "").trim() || null;
+    const sourceUrl = String(row.sourceUrl ?? "").trim() || null;
+    const notes = String(row.notes ?? "").trim() || "Imported from CSV.";
     const duplicate = await findDuplicateCurrentShow({ title, networkOrPlatform, premiereDate: safePremiereDate });
     if (duplicate) continue;
 
@@ -250,16 +375,16 @@ export async function importCurrentShowsCsvAction(formData: FormData) {
         title,
         networkOrPlatform,
         premiereDate: safePremiereDate,
-        finaleDate: parseImportedDate(row.finaleDate ?? null),
+        finaleDate: safeFinaleDate,
         seasonNumber: row.seasonNumber == null || row.seasonNumber === "" ? null : Number(row.seasonNumber),
         episodeCount: row.episodeCount == null || row.episodeCount === "" ? null : Number(row.episodeCount),
         status: String(row.status ?? "").trim() || "premiering soon",
-        genre: String(row.genre ?? "").trim() || null,
-        studio: String(row.studio ?? "").trim() || null,
-        productionCompanies: String(row.productionCompanies ?? "").trim() || null,
-        country: String(row.country ?? "").trim() || null,
+        genre,
+        studio,
+        productionCompanies,
+        country,
         sourceType: String(row.sourceType ?? "").trim() || "manual_csv",
-        sourceReliability: String(row.sourceReliability ?? "").trim() || "high",
+        sourceReliability,
         seasonType: normalizeSeasonType(String(row.seasonType ?? "").trim() || null),
         premiereTime: String(row.premiereTime ?? "").trim() || null,
         episodeTitle: String(row.episodeTitle ?? "").trim() || null,
@@ -267,12 +392,28 @@ export async function importCurrentShowsCsvAction(formData: FormData) {
         airPattern: String(row.airPattern ?? "").trim() || null,
         verifiedAt: new Date(),
         needsVerification: false,
-        sourceUrl: String(row.sourceUrl ?? "").trim() || null,
-        notes: String(row.notes ?? "").trim() || "Imported from CSV."
+        sourceUrl,
+        notes,
+        ...buildCurrentShowConfidenceData({
+          sourceReliability,
+          title,
+          networkOrPlatform,
+          premiereDate: safePremiereDate,
+          finaleDate: safeFinaleDate,
+          studio,
+          productionCompanies,
+          genre,
+          country,
+          sourceUrl,
+          verifiedAt: new Date(),
+          needsVerification: false,
+          notes
+        })
       }
     }).catch(() => null);
 
     if (created) {
+      await syncCurrentShowFlags(created);
       await recordAuditLog({
         entityType: "CurrentShow",
         entityId: created.id,

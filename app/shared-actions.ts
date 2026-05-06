@@ -1,10 +1,11 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { Prisma } from "@prisma/client";
+import { Prisma, type WatchlistType } from "@prisma/client";
 import { recordAuditLog } from "@/lib/audit";
 import { prisma } from "@/lib/prisma";
 import { requireApprovedTeamAccess } from "@/lib/team-auth";
+import { saveWatchlist } from "@/lib/watchlists";
 
 function parseJsonValue(raw: string) {
   const trimmed = raw.trim();
@@ -222,4 +223,108 @@ export async function deleteTeamNoteAction(formData: FormData) {
     source: "team_note"
   });
   revalidatePath(returnPath);
+}
+
+export async function saveWatchlistAction(formData: FormData) {
+  const auth = await requireApprovedTeamAccess();
+  const id = String(formData.get("id") ?? "").trim();
+  const name = String(formData.get("name") ?? "").trim();
+  const description = String(formData.get("description") ?? "").trim() || null;
+  const watchType = String(formData.get("watchType") ?? "").trim();
+  const visibilityInput = String(formData.get("visibility") ?? "private").trim();
+  const criteriaJson = parseJsonValue(String(formData.get("criteriaJson") ?? ""));
+  const returnPath = String(formData.get("returnPath") ?? "/watchlists").trim() || "/watchlists";
+
+  if (!name || !watchType || !auth.user?.email) return;
+
+  const visibility = auth.canManageUsers || auth.adminUnlocked ? (visibilityInput === "team" ? "team" : "private") : "private";
+  const previous = id ? await prisma.watchlist.findUnique({ where: { id } }).catch(() => null) : null;
+
+  if (previous) {
+    const canEdit = auth.canManageUsers || auth.adminUnlocked || previous.createdByEmail === auth.user.email;
+    if (!canEdit) return;
+    if (previous.visibility === "team" && !auth.canManageUsers && !auth.adminUnlocked) return;
+  }
+
+  const saved = await saveWatchlist({
+    id: previous?.id,
+    name,
+    description,
+    watchType: watchType as WatchlistType,
+    criteriaJson,
+    visibility,
+    createdByUserId: auth.user.id,
+    createdByEmail: auth.user.email
+  }).catch(() => null);
+
+  if (saved) {
+    await recordAuditLog({
+      entityType: "Watchlist",
+      entityId: saved.id,
+      action: previous ? "updated" : "created",
+      previousValueJson: previous,
+      newValueJson: saved,
+      reason: previous ? "Watchlist updated." : "Watchlist created.",
+      source: "watchlist"
+    });
+  }
+
+  revalidatePath(returnPath);
+  revalidatePath("/watchlists");
+  revalidatePath("/alerts");
+}
+
+export async function deleteWatchlistAction(formData: FormData) {
+  const auth = await requireApprovedTeamAccess();
+  const id = String(formData.get("id") ?? "").trim();
+  const returnPath = String(formData.get("returnPath") ?? "/watchlists").trim() || "/watchlists";
+  if (!id || !auth.user?.email) return;
+
+  const existing = await prisma.watchlist.findUnique({ where: { id } }).catch(() => null);
+  if (!existing) return;
+
+  const canDelete = auth.canManageUsers || auth.adminUnlocked || existing.createdByEmail === auth.user.email;
+  if (!canDelete) return;
+  if (existing.visibility === "team" && !auth.canManageUsers && !auth.adminUnlocked) return;
+
+  await prisma.watchlist.delete({ where: { id } }).catch(() => null);
+  await recordAuditLog({
+    entityType: "Watchlist",
+    entityId: existing.id,
+    action: "deleted",
+    previousValueJson: existing,
+    newValueJson: null,
+    reason: "Watchlist deleted.",
+    source: "watchlist"
+  });
+
+  revalidatePath(returnPath);
+  revalidatePath("/watchlists");
+  revalidatePath("/alerts");
+}
+
+export async function markAlertReadAction(formData: FormData) {
+  const auth = await requireApprovedTeamAccess();
+  const id = String(formData.get("id") ?? "").trim();
+  const isRead = String(formData.get("isRead") ?? "true").trim() === "true";
+  const returnPath = String(formData.get("returnPath") ?? "/alerts").trim() || "/alerts";
+  if (!id || !auth.user?.email) return;
+
+  const existing = await prisma.alert.findUnique({
+    where: { id },
+    include: { watchlist: true }
+  }).catch(() => null);
+  if (!existing) return;
+
+  const canEdit =
+    !existing.watchlist ||
+    existing.watchlist.visibility === "team" ||
+    existing.watchlist.createdByEmail === auth.user.email ||
+    auth.canManageUsers ||
+    auth.adminUnlocked;
+  if (!canEdit) return;
+
+  await prisma.alert.update({ where: { id }, data: { isRead } }).catch(() => null);
+  revalidatePath(returnPath);
+  revalidatePath("/alerts");
 }
