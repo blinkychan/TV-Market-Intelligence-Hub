@@ -5,6 +5,8 @@ import { mockBuyerDetails } from "@/lib/mock-buyers";
 import { mockCurrentShows } from "@/lib/mock-current-tv";
 import { mockAlerts } from "@/lib/mock-watchlists";
 import { formatDate, humanize } from "@/lib/utils";
+import { getAutoPopulationWeeklySummary } from "@/lib/autonomous-population";
+import { getDigDeeperWeeklySummary } from "@/lib/dig-deeper";
 
 type ReportProject = {
   title: string;
@@ -182,6 +184,56 @@ function listWatchlistAlerts(alerts: ReportWatchlistAlert[]) {
     .join("\n");
 }
 
+type AutoPopSummary = {
+  created: Array<{ entityType: string | null; entityId: string | null; confidenceScore: number | null; notes: string | null }>;
+  flagged: Array<{ articleId: string | null; notes: string | null }>;
+  deduplicated: Array<{ entityId: string | null }>;
+  total: number;
+};
+
+type DigDeeperSummary = {
+  total: number;
+  withFindings: number;
+  applied: number;
+};
+
+function listAutoPopulation(summary: AutoPopSummary) {
+  if (summary.total === 0) return "- No auto-population activity this week.";
+  const lines: string[] = [];
+  if (summary.created.length) {
+    lines.push(`**Auto-Created Records (${summary.created.length})** _(All marked Needs Review)_`);
+    for (const entry of summary.created.slice(0, 8)) {
+      const conf = entry.confidenceScore ? ` · ${Math.round(entry.confidenceScore * 100)}% confidence` : "";
+      lines.push(`- ${entry.entityType ?? "Record"} \`${(entry.entityId ?? "").slice(0, 8)}\`${conf}${entry.notes ? ` — ${entry.notes}` : ""}`);
+    }
+    if (summary.created.length > 8) lines.push(`- _…and ${summary.created.length - 8} more_`);
+  }
+  if (summary.flagged.length) {
+    lines.push(`\n**Flagged for Human Review (${summary.flagged.length})**`);
+    for (const entry of summary.flagged.slice(0, 5)) {
+      lines.push(`- Article \`${(entry.articleId ?? "").slice(0, 8)}\`${entry.notes ? `: ${entry.notes}` : ""}`);
+    }
+    if (summary.flagged.length > 5) lines.push(`- _…and ${summary.flagged.length - 5} more_`);
+  }
+  if (summary.deduplicated.length) {
+    lines.push(`\n**Deduplicated / Linked (${summary.deduplicated.length})** — linked to existing records, not re-created.`);
+  }
+  return lines.join("\n");
+}
+
+function listDigDeeperActivity(summary: DigDeeperSummary) {
+  if (summary.total === 0) return "- No Dig Deeper runs this week.";
+  const lines = [
+    `- **${summary.total}** Dig Deeper run${summary.total === 1 ? "" : "s"} this week`,
+    `- **${summary.withFindings}** returned new findings`,
+    `- **${summary.applied}** had approved updates applied`,
+  ];
+  if (summary.applied > 0) {
+    lines.push("- _Note: all applied updates remain marked Needs Review for final verification._");
+  }
+  return lines.join("\n");
+}
+
 function buildMarkdown({
   reportDate,
   weekStart,
@@ -200,7 +252,9 @@ function buildMarkdown({
   watchlistAlerts,
   lowConfidenceItems,
   sourceCoverageIssues,
-  missingDataFlags
+  missingDataFlags,
+  autoPopSummary,
+  digDeeperSummary,
 }: {
   reportDate: Date;
   weekStart: Date;
@@ -220,13 +274,16 @@ function buildMarkdown({
   lowConfidenceItems: Array<{ label: string; type: string; confidenceLevel?: string | null }>;
   sourceCoverageIssues: ReportCoverageIssue[];
   missingDataFlags: ReportMissingFlag[];
+  autoPopSummary: AutoPopSummary;
+  digDeeperSummary: DigDeeperSummary;
 }) {
   const executiveSummary = [
     `${sales.filter((project) => project.confidenceLevel !== "low").length} sales`,
     `${pilotOrders.filter((project) => project.confidenceLevel !== "low").length} pilot orders`,
     `${seriesOrders.filter((project) => project.confidenceLevel !== "low").length} series orders`,
     `${premieres.filter((show) => show.confidenceLevel !== "low").length} premieres next week`,
-    `${reviewItems.length} items needing review`
+    `${reviewItems.length} items needing review`,
+    ...(autoPopSummary.created.length ? [`${autoPopSummary.created.length} auto-created drafts`] : []),
   ].join(" · ");
 
   const attachmentSummary = majorAttachments.length
@@ -275,6 +332,12 @@ ${listArticles(reviewItems)}
 
 ## Low Confidence / Needs Review
 ${listLowConfidenceItems(lowConfidenceItems)}
+
+## Auto-Population Activity
+${listAutoPopulation(autoPopSummary)}
+
+## Dig Deeper Activity
+${listDigDeeperActivity(digDeeperSummary)}
 
 ## Data Quality / Coverage Issues
 ${listCoverageIssues(sourceCoverageIssues, missingDataFlags)}
@@ -423,7 +486,9 @@ async function fetchDatabaseData(reportDate: Date) {
       announcementDate: project.announcementDate,
       lastUpdateDate: project.lastUpdateDate,
       confidenceLevel: project.confidenceLevel
-    }))
+    })),
+    autoPopSummary: await getAutoPopulationWeeklySummary(weekStart, weekEnd),
+    digDeeperSummary: await getDigDeeperWeeklySummary(weekStart, weekEnd),
   };
 }
 
@@ -516,7 +581,21 @@ function fetchMockData(reportDate: Date) {
         reason: "Current show confidence is low."
       }
     ],
-    staleProjects: projects.filter((project) => project.status === "stale")
+    staleProjects: projects.filter((project) => project.status === "stale"),
+    autoPopSummary: {
+      created: [
+        { entityType: "Project", entityId: "mock-auto-project-1", confidenceScore: 0.87, notes: "Auto-created \"Harbor Lights\" (cautious mode)" },
+        { entityType: "Project", entityId: "mock-auto-project-2", confidenceScore: 0.82, notes: "Auto-created \"Northern Exchange\" (cautious mode)" },
+        { entityType: "CurrentShow", entityId: "mock-auto-show-1", confidenceScore: 0.91, notes: "Auto-created \"Signal House S2\" (cautious mode)" },
+      ],
+      flagged: [
+        { articleId: "mock-ap-4", notes: "Confidence 61% below 80% threshold" },
+        { articleId: "mock-ap-5", notes: "Confidence 58% below 80% threshold" },
+      ],
+      deduplicated: [],
+      total: 5,
+    },
+    digDeeperSummary: { total: 2, withFindings: 2, applied: 1 },
   };
 }
 
@@ -532,7 +611,7 @@ export function getDefaultFriday(now = new Date()) {
 export async function generateWeeklyReportPayload(reportDateValue: string, forceMock = false): Promise<WeeklyReportPayload> {
   const reportDate = parseISO(reportDateValue);
   const sourceData = forceMock ? fetchMockData(reportDate) : await fetchDatabaseData(reportDate).catch(() => fetchMockData(reportDate));
-  const { projects, premieres, reviewItems, staleProjects, teamNotes, watchlistAlerts, sourceCoverageIssues, missingDataFlags, weekStart, weekEnd, dataSource } = sourceData;
+  const { projects, premieres, reviewItems, staleProjects, teamNotes, watchlistAlerts, sourceCoverageIssues, missingDataFlags, weekStart, weekEnd, dataSource, autoPopSummary, digDeeperSummary } = sourceData;
 
   const sales = projects.filter((project) => project.status === "sold");
   const pilotOrders = projects.filter((project) => project.status === "pilot_order");
@@ -582,7 +661,9 @@ export async function generateWeeklyReportPayload(reportDateValue: string, force
     watchlistAlerts,
     lowConfidenceItems,
     sourceCoverageIssues,
-    missingDataFlags
+    missingDataFlags,
+    autoPopSummary,
+    digDeeperSummary,
   });
 
   const fullMarkdown = `${markdown}
