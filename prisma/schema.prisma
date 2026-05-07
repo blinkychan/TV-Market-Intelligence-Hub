@@ -116,6 +116,19 @@ enum WatchlistType {
   country
 }
 
+enum AutoPopulateMode {
+  off
+  cautious
+  aggressive
+}
+
+enum EmbeddingStatus {
+  pending
+  indexed
+  stale
+  failed
+}
+
 enum AlertType {
   new_match
   status_change
@@ -192,7 +205,12 @@ model Project {
   tags                  String?
   archivedAt            DateTime?
   needsReview           Boolean        @default(false)
+  autoCreated           Boolean        @default(false)
+  autoCreatedMode       String?
   notes                 String?
+  searchableText        String?
+  embeddingStatus       EmbeddingStatus @default(pending)
+  lastIndexedAt         DateTime?
   createdAt             DateTime       @default(now())
   updatedAt             DateTime       @updatedAt
   relationships         Relationship[]
@@ -210,6 +228,9 @@ model Project {
   @@index([duplicateGroupId])
   @@index([duplicateStatus])
   @@index([archivedAt])
+  @@index([autoCreated])
+  @@index([embeddingStatus])
+  @@index([lastIndexedAt])
 }
 
 model CurrentShow {
@@ -245,7 +266,12 @@ model CurrentShow {
   duplicateStatus       DuplicateStatus @default(not_duplicate)
   tags                  String?
   archivedAt            DateTime?
+  autoCreated           Boolean  @default(false)
+  autoCreatedMode       String?
   notes                 String?
+  searchableText        String?
+  embeddingStatus       EmbeddingStatus @default(pending)
+  lastIndexedAt         DateTime?
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
   linkedArticles        Article[] @relation("LinkedShowArticles")
@@ -262,6 +288,9 @@ model CurrentShow {
   @@index([duplicateGroupId])
   @@index([duplicateStatus])
   @@index([archivedAt])
+  @@index([autoCreated])
+  @@index([embeddingStatus])
+  @@index([lastIndexedAt])
 }
 
 model CurrentTvSource {
@@ -422,6 +451,9 @@ model Article {
   duplicateStatus       DuplicateStatus @default(not_duplicate)
   tags                  String?
   archivedAt            DateTime?
+  searchableText        String?
+  embeddingStatus       EmbeddingStatus @default(pending)
+  lastIndexedAt         DateTime?
   createdAt             DateTime     @default(now())
   updatedAt             DateTime     @updatedAt
 
@@ -442,6 +474,8 @@ model Article {
   @@index([duplicateGroupId])
   @@index([duplicateStatus])
   @@index([archivedAt])
+  @@index([embeddingStatus])
+  @@index([lastIndexedAt])
 }
 
 model RssFeed {
@@ -786,5 +820,147 @@ model UsageEvent {
   @@index([page])
   @@index([entityType, entityId])
   @@index([key])
+  @@index([createdAt])
+}
+
+// ─── Step 32: Autonomous Population + Semantic Search ────────────────────────
+
+model AppSettings {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+
+  @@index([key])
+}
+
+model AutoPopulationLog {
+  id             String   @id @default(cuid())
+  articleId      String?
+  entityType     String?
+  entityId       String?
+  action         String
+  confidenceScore Float?
+  mode           String
+  notes          String?
+  createdAt      DateTime @default(now())
+
+  @@index([articleId])
+  @@index([entityType])
+  @@index([entityId])
+  @@index([action])
+  @@index([mode])
+  @@index([createdAt])
+}
+
+model DigDeeperRun {
+  id              String    @id @default(cuid())
+  entityType      String
+  entityId        String
+  status          String    @default("pending")
+  query           String?
+  findingsText    String?
+  findingsJson    Json?
+  approvedAt      DateTime?
+  approvedByEmail String?
+  appliedAt       DateTime?
+  appliedByEmail  String?
+  createdByEmail  String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([entityType, entityId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model SearchLog {
+  id          String   @id @default(cuid())
+  query       String
+  resultCount Int      @default(0)
+  userId      String?
+  email       String?
+  filters     String?
+  createdAt   DateTime @default(now())
+
+  @@index([query])
+  @@index([email])
+  @@index([createdAt])
+}
+
+// ─── Step 33: Scheduled Automation Orchestrator ───────────────────────────────
+
+enum AutomationMode {
+  off
+  cautious
+  aggressive
+}
+
+model AutomationSettings {
+  id                        String         @id @default(cuid())
+  rssEnabled                Boolean        @default(true)
+  backfillEnabled           Boolean        @default(true)
+  bodyExtractionEnabled     Boolean        @default(true)
+  aiExtractionEnabled       Boolean        @default(true)
+  autoCreateDraftRecordsEnabled Boolean    @default(false)
+  maxArticlesPerRun         Int            @default(10)
+  maxBodyFetchesPerRun      Int            @default(5)
+  maxAIExtractionsPerRun    Int            @default(3)
+  maxBackfillJobsPerRun     Int            @default(1)
+  automationMode            AutomationMode @default(cautious)
+  isPaused                  Boolean        @default(false)
+  createdAt                 DateTime       @default(now())
+  updatedAt                 DateTime       @updatedAt
+}
+
+model AutomationRun {
+  id                  String   @id @default(cuid())
+  triggeredBy         String   @default("cron")
+  steps               String   @default("all")
+  mode                String
+  isPaused            Boolean  @default(false)
+  rssArticlesFetched  Int      @default(0)
+  rssArticlesSaved    Int      @default(0)
+  backfillJobsRun     Int      @default(0)
+  backfillArticles    Int      @default(0)
+  bodiesFetched       Int      @default(0)
+  bodiesSkipped       Int      @default(0)
+  aiExtractionsRun    Int      @default(0)
+  draftsCreated       Int      @default(0)
+  deduplicatesFound   Int      @default(0)
+  errors              Int      @default(0)
+  errorMessages       String?
+  durationMs          Int?
+  completedAt         DateTime?
+  createdAt           DateTime @default(now())
+
+  @@index([triggeredBy])
+  @@index([createdAt])
+  @@index([completedAt])
+}
+
+// ─── Step 34: Deep Similarity Search ─────────────────────────────────────────
+
+model SavedSearch {
+  id          String   @id @default(cuid())
+  name        String
+  query       String
+  searchMode  String   @default("fuzzy")
+  genre       String?
+  buyer       String?
+  yearFrom    Int?
+  yearTo      Int?
+  includeShows     Boolean @default(true)
+  includeProjects  Boolean @default(true)
+  includeStale     Boolean @default(false)
+  includeArticles  Boolean @default(true)
+  email       String?
+  userId      String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([email])
+  @@index([userId])
   @@index([createdAt])
 }

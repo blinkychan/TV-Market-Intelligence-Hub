@@ -1,0 +1,370 @@
+import { logOperationalEvent } from "@/lib/ops-log";
+
+export type BodyFetchStatus =
+  | "not_fetched"
+  | "success"
+  | "robots_blocked"
+  | "paywall_likely"
+  | "timeout"
+  | "fetch_error"
+  | "extraction_error";
+
+export type BodyFetchResult = {
+  status: BodyFetchStatus;
+  robotsAllowed: boolean | null;
+  paywallLikely: boolean;
+  rawHtml: string | null;
+  extractedText: string | null;
+  extractedExcerpt: string | null;
+  extractionMethod: string | null;
+  error: string | null;
+  fetchedAt: Date | null;
+};
+
+const BODY_USER_AGENT = "TV Market Intelligence Hub/0.1 (article body extraction; metadata + internal review only)";
+const FETCH_TIMEOUT_MS = 8000;
+const MAX_HTML_BYTES = 1_000_000;
+const MAX_EXTRACTED_TEXT_LENGTH = 20_000;
+
+async function loadModule<T>(specifier: string): Promise<T | null> {
+  try {
+    const dynamicImport = new Function("s", "return import(s)") as (s: string) => Promise<T>;
+    return await dynamicImport(specifier);
+  } catch {
+    return null;
+  }
+}
+
+async function loadRobotsParser() {
+  const module = await loadModule<{ default?: (url: string, body: string) => { isAllowed: (targetUrl: string, userAgent?: string) => boolean | undefined } }>(
+    "robots-parser"
+  );
+  return module?.default ?? null;
+}
+
+async function loadReadabilityRuntime() {
+  const [jsdomModule, readabilityModule] = await Promise.all([
+    loadModule<{ JSDOM?: new (html: string, options?: { url?: string }) => { window: { document: Document } } }>("jsdom"),
+    loadModule<{ Readability?: new (document: Document) => { parse: () => { textContent?: string | null } | null } }>("@mozilla/readability")
+  ]);
+
+  if (!jsdomModule?.JSDOM || !readabilityModule?.Readability) {
+    return null;
+  }
+
+  return {
+    JSDOM: jsdomModule.JSDOM,
+    Readability: readabilityModule.Readability
+  };
+}
+
+const MOCK_BODY_FIXTURES: Record<string, BodyFetchResult> = {
+  "https://preview.example.com/harbor-lights": {
+    status: "success",
+    robotsAllowed: true,
+    paywallLikely: false,
+    rawHtml: "<article><h1>Harbor Lights</h1><p>Netflix landed coastal crime drama Harbor Lights from A24 Television and wiip. Maya Rivers created the project and Noor Hassan is attached to write. The package follows a medical examiner who uncovers a port corruption conspiracy.</p></article>",
+    extractedText:
+      "Netflix landed coastal crime drama Harbor Lights from A24 Television and wiip. Maya Rivers created the project and Noor Hassan is attached to write. The package follows a medical examiner who uncovers a port corruption conspiracy.",
+    extractedExcerpt:
+      "Netflix landed coastal crime drama Harbor Lights from A24 Television and wiip. Maya Rivers created the project and Noor Hassan is attached to write.",
+    extractionMethod: "mock_readability",
+    error: null,
+    fetchedAt: new Date("2026-04-28T12:00:00.000Z")
+  },
+  "https://preview.example.com/northern-exchange": {
+    status: "robots_blocked",
+    robotsAllowed: false,
+    paywallLikely: false,
+    rawHtml: null,
+    extractedText: null,
+    extractedExcerpt: null,
+    extractionMethod: null,
+    error: "robots.txt disallows body fetch for this URL.",
+    fetchedAt: new Date("2026-04-28T12:00:00.000Z")
+  },
+  "https://preview.example.com/red-valley": {
+    status: "paywall_likely",
+    robotsAllowed: true,
+    paywallLikely: true,
+    rawHtml: "<html><body><div class='metered'>Subscribe to continue reading...</div></body></html>",
+    extractedText: null,
+    extractedExcerpt: "Paywall likely. Only partial teaser content was available.",
+    extractionMethod: "mock_paywall_detection",
+    error: "Paywall likely; body text was not stored.",
+    fetchedAt: new Date("2026-04-28T12:00:00.000Z")
+  },
+  "https://preview.example.com/witness-chair": {
+    status: "timeout",
+    robotsAllowed: true,
+    paywallLikely: false,
+    rawHtml: null,
+    extractedText: null,
+    extractedExcerpt: null,
+    extractionMethod: null,
+    error: "Timed out while fetching article HTML.",
+    fetchedAt: new Date("2026-04-28T12:00:00.000Z")
+  },
+  "https://preview.example.com/harbor-lights-duplicate": {
+    status: "fetch_error",
+    robotsAllowed: true,
+    paywallLikely: false,
+    rawHtml: null,
+    extractedText: null,
+    extractedExcerpt: null,
+    extractionMethod: null,
+    error: "Fetch failed with 502.",
+    fetchedAt: new Date("2026-04-28T12:00:00.000Z")
+  }
+};
+
+function isPreviewFixture(url: string) {
+  return url.startsWith("https://preview.example.com/") || url.startsWith("https://history.example.com/");
+}
+
+function truncateExcerpt(text: string | null, maxLength = 280) {
+  if (!text) return null;
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, maxLength - 1).trimEnd()}...`;
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchWithRetry(url: string, init: RequestInit, label: string) {
+  const delays = [250, 800];
+  let attempts = 0;
+
+  while (true) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
+    try {
+      const response = await fetch(url, { ...init, signal: controller.signal });
+      clearTimeout(timeout);
+
+      if (response.ok || response.status === 401 || response.status === 403 || response.status < 500 || attempts >= delays.length) {
+        return { response, attempts };
+      }
+
+      attempts += 1;
+      logOperationalEvent("warn", `${label} retry scheduled.`, { url, status: response.status, retryCount: attempts });
+      await delay(delays[attempts - 1]);
+    } catch (error) {
+      clearTimeout(timeout);
+      if (attempts >= delays.length) {
+        throw error;
+      }
+      attempts += 1;
+      logOperationalEvent("warn", `${label} retry scheduled after fetch failure.`, { url, retryCount: attempts });
+      await delay(delays[attempts - 1]);
+    }
+  }
+}
+
+function detectPaywall(html: string) {
+  const normalized = html.toLowerCase();
+  return ["subscribe to continue", "subscriber-only", "sign in to continue", "already a subscriber", "join now to read"].some((marker) =>
+    normalized.includes(marker)
+  );
+}
+
+export async function checkRobotsAllowed(url: string): Promise<boolean | null> {
+  if (isPreviewFixture(url)) {
+    const fixture = MOCK_BODY_FIXTURES[url];
+    return fixture ? fixture.robotsAllowed : true;
+  }
+
+  try {
+    const target = new URL(url);
+    const robotsUrl = `${target.origin}/robots.txt`;
+    const { response } = await fetchWithRetry(robotsUrl, {
+      headers: { "user-agent": BODY_USER_AGENT },
+      cache: "no-store"
+    }, "robots fetch");
+
+    if (!response.ok) return null;
+
+    const body = await response.text();
+    const parser = await loadRobotsParser();
+    if (!parser) return null;
+    const robots = parser(robotsUrl, body);
+    const allowed = robots.isAllowed(url, BODY_USER_AGENT);
+    return typeof allowed === "boolean" ? allowed : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function extractReadableText(html: string, url = "https://example.com/article"): Promise<{
+  extractedText: string | null;
+  extractedExcerpt: string | null;
+  paywallLikely: boolean;
+}> {
+  const paywallLikely = detectPaywall(html);
+  if (paywallLikely) {
+    return {
+      extractedText: null,
+      extractedExcerpt: "Paywall likely. Only limited preview text appears accessible.",
+      paywallLikely
+    };
+  }
+
+  try {
+    const runtime = await loadReadabilityRuntime();
+    if (!runtime) {
+      return {
+        extractedText: null,
+        extractedExcerpt: null,
+        paywallLikely: false
+      };
+    }
+    const dom = new runtime.JSDOM(html, { url });
+    const reader = new runtime.Readability(dom.window.document);
+    const article = reader.parse();
+    const extractedText = article?.textContent?.replace(/\s+/g, " ").trim().slice(0, MAX_EXTRACTED_TEXT_LENGTH) ?? null;
+
+    return {
+      extractedText,
+      extractedExcerpt: truncateExcerpt(extractedText),
+      paywallLikely: false
+    };
+  } catch {
+    return {
+      extractedText: null,
+      extractedExcerpt: null,
+      paywallLikely: false
+    };
+  }
+}
+
+export async function fetchArticleBody(url: string): Promise<BodyFetchResult> {
+  if (isPreviewFixture(url) && MOCK_BODY_FIXTURES[url]) {
+    return MOCK_BODY_FIXTURES[url];
+  }
+
+  const robotsAllowed = await checkRobotsAllowed(url);
+  if (robotsAllowed === false) {
+    return {
+      status: "robots_blocked",
+      robotsAllowed: false,
+      paywallLikely: false,
+      rawHtml: null,
+      extractedText: null,
+      extractedExcerpt: null,
+      extractionMethod: null,
+      error: "robots.txt disallows body fetch for this URL.",
+      fetchedAt: new Date()
+    };
+  }
+
+  try {
+    const { response, attempts } = await fetchWithRetry(url, {
+      headers: {
+        "user-agent": BODY_USER_AGENT,
+        accept: "text/html,application/xhtml+xml"
+      },
+      cache: "no-store"
+    }, "article body fetch");
+
+    if (!response.ok) {
+      return {
+        status: "fetch_error",
+        robotsAllowed,
+        paywallLikely: false,
+        rawHtml: null,
+        extractedText: null,
+        extractedExcerpt: null,
+        extractionMethod: null,
+        error: `Fetch failed with ${response.status}.${attempts ? ` Retries attempted: ${attempts}.` : ""}`,
+        fetchedAt: new Date()
+      };
+    }
+
+    const contentLength = Number(response.headers.get("content-length") ?? "0");
+    if (contentLength > MAX_HTML_BYTES) {
+      return {
+        status: "fetch_error",
+        robotsAllowed,
+        paywallLikely: false,
+        rawHtml: null,
+        extractedText: null,
+        extractedExcerpt: null,
+        extractionMethod: null,
+        error: "Article body exceeded the maximum allowed size.",
+        fetchedAt: new Date()
+      };
+    }
+
+    const rawHtml = await response.text();
+    if (rawHtml.length > MAX_HTML_BYTES) {
+      return {
+        status: "fetch_error",
+        robotsAllowed,
+        paywallLikely: false,
+        rawHtml: null,
+        extractedText: null,
+        extractedExcerpt: null,
+        extractionMethod: null,
+        error: "Article body exceeded the maximum allowed size.",
+        fetchedAt: new Date()
+      };
+    }
+    const readable = await extractReadableText(rawHtml, url);
+
+    if (readable.paywallLikely) {
+      return {
+        status: "paywall_likely",
+        robotsAllowed,
+        paywallLikely: true,
+        rawHtml,
+        extractedText: null,
+        extractedExcerpt: readable.extractedExcerpt,
+        extractionMethod: "mozilla_readability",
+        error: "Paywall likely; body text was not stored.",
+        fetchedAt: new Date()
+      };
+    }
+
+    if (!readable.extractedText) {
+      return {
+        status: "extraction_error",
+        robotsAllowed,
+        paywallLikely: false,
+        rawHtml,
+        extractedText: null,
+        extractedExcerpt: null,
+        extractionMethod: "mozilla_readability",
+        error: "Readable body text could not be extracted.",
+        fetchedAt: new Date()
+      };
+    }
+
+    return {
+      status: "success",
+      robotsAllowed,
+      paywallLikely: false,
+      rawHtml,
+      extractedText: readable.extractedText,
+      extractedExcerpt: readable.extractedExcerpt,
+      extractionMethod: "mozilla_readability",
+      error: null,
+      fetchedAt: new Date()
+    };
+  } catch (error) {
+    const timedOut = error instanceof Error && error.name === "AbortError";
+    return {
+      status: timedOut ? "timeout" : "fetch_error",
+      robotsAllowed,
+      paywallLikely: false,
+      rawHtml: null,
+      extractedText: null,
+      extractedExcerpt: null,
+      extractionMethod: null,
+      error: timedOut ? "Timed out while fetching article HTML." : error instanceof Error ? error.message : "Article fetch failed.",
+      fetchedAt: new Date()
+    };
+  }
+}

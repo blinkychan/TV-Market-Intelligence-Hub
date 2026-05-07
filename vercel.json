@@ -1,12 +1,9 @@
 {
+  "$schema": "https://openapi.vercel.sh/vercel.json",
   "crons": [
     {
-      "path": "/api/cron/backfill-next",
-      "schedule": "0 12 * * *"
-    },
-    {
-      "path": "/api/cron/send-weekly-report",
-      "schedule": "0 16 * * 5"
+      "path": "/api/cron/automation",
+      "schedule": "0 */6 * * *"
     }
   ]
 }
