@@ -14,10 +14,7 @@ import {
   History,
   UsersRound,
   Eye,
-  MessageSquarePlus,
-  Search,
-  Zap,
-  Clock
+  MessageSquarePlus
 } from "lucide-react";
 
 export type NavItem = {
@@ -55,14 +52,6 @@ export const navGroups: NavGroup[] = [
       { href: "/weekly-reports", label: "Weekly Reports", icon: CalendarDays },
       { href: "/watchlists", label: "Watchlists", icon: Eye },
       { href: "/alerts", label: "Alerts", icon: Bell }
-    ]
-  },
-  {
-    label: "Intelligence",
-    items: [
-      { href: "/search", label: "Market Search", icon: Search },
-      { href: "/settings/auto-populate", label: "Auto-Population", icon: Zap },
-      { href: "/settings/automation", label: "Automation Scheduler", icon: Clock }
     ]
   },
   {
