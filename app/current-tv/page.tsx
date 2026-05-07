@@ -1,9 +1,11 @@
 import { CurrentTvTracker, type CurrentTvRow } from "@/components/tables/current-tv-tracker";
+import { PageIntro } from "@/components/layout/page-intro";
 import { mockAuditLogs } from "@/lib/mock-audit";
 import { defaultCurrentTvSources, type CurrentTvSourceRecord } from "@/lib/current-tv-sources";
 import { mockBuyerDetails } from "@/lib/mock-buyers";
 import { mockCurrentShows } from "@/lib/mock-current-tv";
 import { calculateCurrentShowConfidence, joinConfidenceReasons } from "@/lib/confidence";
+import { recordUsageEvent } from "@/lib/feedback";
 import { prisma } from "@/lib/prisma";
 import { getSavedViewsForPage } from "@/lib/saved-views";
 import { getCurrentUserContext } from "@/lib/team-auth";
@@ -136,15 +138,26 @@ export default async function CurrentTvPage({
   const savedViews = await getSavedViewsForPage("current_tv_tracker").catch(() => []);
   const canEdit = (auth.canEditContent || auth.adminUnlocked) && dataSource === "database";
 
+  if (params.view || params.platform || params.genre || params.status || params.confidence) {
+    await recordUsageEvent({
+      userId: auth.user?.id ?? null,
+      email: auth.user?.email ?? null,
+      eventType: params.view ? "saved_view_used" : "filter_used",
+      page: "/current-tv",
+      value: params.view ?? JSON.stringify(params)
+    });
+  }
+
   return (
     <div className="space-y-5">
-      <section className="rounded-lg border bg-white p-6 shadow-panel">
-        <p className="text-sm font-semibold uppercase tracking-[0.2em] text-primary">Airing and Upcoming</p>
-        <h1 className="mt-2 text-3xl font-semibold tracking-tight">Current TV Tracker</h1>
-        <p className="mt-3 max-w-3xl text-muted-foreground">
-          Track what is airing now, what premieres soon, and where finales and returning seasons are landing.
-        </p>
-      </section>
+      <PageIntro
+        eyebrow="Current TV"
+        title="Current TV Tracker"
+        description="Track what is airing now, what premieres soon, and where finales and returning seasons are landing."
+        helperText="Use the calendar view for scheduling work, and the table view when you need to verify dates, networks, or source details record by record."
+        dataSource={dataSource}
+        errorMessage={errorMessage ? (dataSource === "mock" ? `Demo preview is active because the current TV database read failed: ${errorMessage}` : errorMessage) : null}
+      />
       <CurrentTvTracker
         rows={rows}
         sources={sources}

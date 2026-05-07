@@ -10,6 +10,7 @@ import { runNextBackfillJobAction } from "@/app/sources/backfill/actions";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUserContext, requireAdminCapabilityAccess } from "@/lib/team-auth";
 import { formatDate } from "@/lib/utils";
+import { PageIntro } from "@/components/layout/page-intro";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -160,33 +161,27 @@ export default async function AdminStatusPage({
 
   return (
     <div className="space-y-6">
-      <section className="rounded-lg border bg-white p-6 shadow-panel">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-primary">Production Readiness</p>
-            <h1 className="mt-2 text-3xl font-semibold tracking-tight">Admin Status</h1>
-            <p className="mt-3 max-w-3xl text-muted-foreground">
-              Hosted operations view for database health, ingestion activity, and review-queue readiness. This page always shows live infrastructure state and never swaps in mock preview data on its own.
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Badge className={snapshot.databaseConnected ? "bg-emerald-50 text-emerald-700 ring-emerald-200" : "bg-rose-50 text-rose-700 ring-rose-200"}>
-              Database: {snapshot.databaseConnected ? "Connected" : "Disconnected"}
-            </Badge>
-            <Badge className="bg-sky-50 text-sky-700 ring-sky-200">Environment: {snapshot.appEnvironment}</Badge>
-            {auth.sessionSource === "supabase" ? (
-              <form action={logoutTeamSession}>
-                <Button type="submit" variant="secondary">Team log out</Button>
-              </form>
-            ) : null}
-            {auth.adminUnlocked ? (
-              <form action={logoutAdmin}>
-                <Button type="submit" variant="secondary">End admin unlock</Button>
-              </form>
-            ) : null}
-          </div>
-        </div>
-      </section>
+      <PageIntro
+        eyebrow="Admin"
+        title="Admin Status"
+        description="Hosted operations view for database health, ingestion activity, and review-queue readiness. This page always shows live infrastructure state and never swaps in demo data on its own."
+        helperText="This is the daily operations page: use it to check live health, confirm counts, and run the safest manual controls without digging through logs."
+      >
+        <Badge className={snapshot.databaseConnected ? "bg-emerald-50 text-emerald-700 ring-emerald-200" : "bg-rose-50 text-rose-700 ring-rose-200"}>
+          Database: {snapshot.databaseConnected ? "Connected" : "Disconnected"}
+        </Badge>
+        <Badge className="bg-sky-50 text-sky-700 ring-sky-200">Environment: {snapshot.appEnvironment}</Badge>
+        {auth.sessionSource === "supabase" ? (
+          <form action={logoutTeamSession}>
+            <Button type="submit" variant="secondary">Team log out</Button>
+          </form>
+        ) : null}
+        {auth.adminUnlocked ? (
+          <form action={logoutAdmin}>
+            <Button type="submit" variant="secondary">End admin unlock</Button>
+          </form>
+        ) : null}
+      </PageIntro>
 
       {!snapshot.databaseConnected ? (
         <Card className="border-rose-200 bg-rose-50 shadow-panel">

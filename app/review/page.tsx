@@ -18,12 +18,14 @@ import {
   saveExtractedFields,
   updateArticleStatus
 } from "./actions";
+import { PageIntro } from "@/components/layout/page-intro";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input, Select } from "@/components/ui/input";
 import { Table, Td, Th } from "@/components/ui/table";
 import { ChangeHistoryPanel } from "@/components/audit/change-history";
+import { FeedbackButton } from "@/components/layout/feedback-button";
 import { SavedViewRouterPanel } from "@/components/shared/saved-view-router-panel";
 import { TeamNotesPanel } from "@/components/shared/team-notes-panel";
 import type { AuditLogEntry } from "@/lib/audit";
@@ -34,6 +36,7 @@ import {
   isLowConfidenceHighImpact,
   parseConfidenceReasons
 } from "@/lib/confidence";
+import { recordUsageEvent } from "@/lib/feedback";
 import { mockCurrentShows } from "@/lib/mock-current-tv";
 import { mockAuditLogs } from "@/lib/mock-audit";
 import { readMockPreviewState } from "@/lib/mock-preview-store";
@@ -314,6 +317,21 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
   const canEdit = auth.canEditContent || auth.adminUnlocked;
   const canAdminOps = auth.canManageIngestion || auth.adminUnlocked;
 
+  if (params.status || params.q || params.confidence || params.missing) {
+    await recordUsageEvent({
+      userId: auth.user?.id ?? null,
+      email: auth.user?.email ?? null,
+      eventType: "filter_used",
+      page: "/review",
+      value: JSON.stringify({
+        status: params.status ?? "",
+        q: params.q ?? "",
+        confidence: params.confidence ?? "",
+        missing: params.missing ?? ""
+      })
+    });
+  }
+
   const enrichedArticles = articles.map((article) => {
     const confidence = deriveReviewConfidence({
       sourceReliability: article.sourceReliability,
@@ -427,30 +445,18 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
 
   return (
     <div className="space-y-6">
-      <section className="rounded-lg border bg-white p-6 shadow-panel">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-primary">Human Review</p>
-            <h1 className="mt-2 text-3xl font-semibold tracking-tight">Article Review Queue</h1>
-            <p className="mt-3 max-w-3xl text-muted-foreground">
-              Review incoming trade items, inspect draft structured fields, and decide whether each article should become a tracked project or show.
-            </p>
-          </div>
-          <Badge className={dataSource === "database" ? "bg-emerald-50 text-emerald-700 ring-emerald-200" : "bg-amber-50 text-amber-800 ring-amber-200"}>
-            Data Source: {dataSource === "database" ? "Database" : "Mock Preview Data"}
-          </Badge>
-        </div>
-        {errorMessage ? (
-          <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-            {dataSource === "mock" ? `Preview data is active because the database queue could not be read: ${errorMessage}` : errorMessage}
-          </div>
-        ) : null}
+      <PageIntro
+        eyebrow="Review"
+        title="Article Review Queue"
+        description="Review incoming trade items, inspect draft structured fields, and decide whether each article should become a tracked project or show."
+        helperText="Start with low-confidence, high-impact items first. Body text and source reliability usually tell you whether an article is ready to trust."
+        dataSource={dataSource}
+        errorMessage={errorMessage ? (dataSource === "mock" ? `Demo preview is active because the review queue could not be read from the live database: ${errorMessage}` : errorMessage) : null}
+      >
         {!canEdit ? (
-          <div className="mt-4 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900">
-            Your current role is read-only. Editors can work the review queue, and admins can also run body-fetch and ingestion-adjacent controls.
-          </div>
+          <Badge className="bg-sky-50 text-sky-700 ring-sky-200">Read-only access</Badge>
         ) : null}
-      </section>
+      </PageIntro>
 
       <section className="grid gap-4 md:grid-cols-4">
         <Card className="shadow-panel">
@@ -485,6 +491,7 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
       <Card className="shadow-panel">
         <CardHeader>
           <CardTitle>Queue Filters</CardTitle>
+          <p className="text-sm text-muted-foreground">“Article Processing Status” shows where each item sits in the review flow.</p>
         </CardHeader>
         <CardContent className="space-y-4">
           <form className="flex flex-col gap-3 lg:flex-row lg:items-center">
@@ -716,6 +723,15 @@ export default async function ReviewQueuePage({ searchParams }: { searchParams: 
                   <a href={selectedArticle.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-sm text-primary hover:underline">
                     Open source article <ExternalLink className="h-3.5 w-3.5" />
                   </a>
+                  <div className="pt-2">
+                    <FeedbackButton
+                      variant="inline"
+                      defaultType="data_issue"
+                      entityType="Article"
+                      entityId={selectedArticle.id}
+                      label="Report Data Issue"
+                    />
+                  </div>
                 </div>
 
                 <div className="grid gap-3 md:grid-cols-2">

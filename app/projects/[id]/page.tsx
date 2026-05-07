@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, ExternalLink } from "lucide-react";
 import { ChangeHistoryPanel } from "@/components/audit/change-history";
+import { FeedbackButton } from "@/components/layout/feedback-button";
 import { TeamNotesPanel } from "@/components/shared/team-notes-panel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge, StatusBadge } from "@/components/ui/badge";
@@ -49,6 +50,15 @@ export default async function ProjectDetailPage({ params }: { params: Promise<{ 
             Source article <ExternalLink className="h-4 w-4" />
           </a>
         ) : null}
+        <div className="mt-4">
+          <FeedbackButton
+            variant="inline"
+            defaultType="data_issue"
+            entityType="Project"
+            entityId={project.id}
+            label="Report Data Issue"
+          />
+        </div>
       </section>
 
       <section className="grid gap-6 lg:grid-cols-[2fr_1fr]">

@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { recordAuditLog } from "@/lib/audit";
+import { recordUsageEvent } from "@/lib/feedback";
 import { prisma } from "@/lib/prisma";
 import { generateWeeklyReportPayload } from "@/lib/weekly-report";
 
@@ -34,6 +35,17 @@ export async function saveReport(formData: FormData) {
       source: "weekly_report"
     });
   }
+
+  await recordUsageEvent({
+    eventType: "report_generated",
+    page: "/weekly-reports",
+    value: payload.title,
+    metadata: {
+      reportDate,
+      weekStart: payload.weekStart.toISOString(),
+      weekEnd: payload.weekEnd.toISOString()
+    }
+  });
 
   revalidatePath("/weekly-reports");
 }

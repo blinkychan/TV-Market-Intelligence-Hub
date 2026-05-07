@@ -1,7 +1,7 @@
 import { Download, FileText, Save } from "lucide-react";
 import { isFriday, parseISO } from "date-fns";
 import { saveReport } from "./actions";
-import { Badge } from "@/components/ui/badge";
+import { PageIntro } from "@/components/layout/page-intro";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -26,20 +26,13 @@ export default async function WeeklyReportsPage({
 
   return (
     <div className="space-y-6">
-      <section className="rounded-lg border bg-white p-6 shadow-panel">
-        <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-start">
-          <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-primary">Reporting</p>
-            <h1 className="mt-2 text-3xl font-semibold tracking-tight">Weekly Reports</h1>
-            <p className="mt-3 max-w-3xl text-muted-foreground">
-              Generate a Friday report from tracked projects, current TV schedules, buyer activity, and review items.
-            </p>
-          </div>
-          <Badge className={preview.dataSource === "database" ? "bg-emerald-50 text-emerald-700 ring-emerald-200" : "bg-amber-50 text-amber-800 ring-amber-200"}>
-            Data Source: {preview.dataSource === "database" ? "Database" : "Mock Preview Data"}
-          </Badge>
-        </div>
-      </section>
+      <PageIntro
+        eyebrow="Reports"
+        title="Weekly Reports"
+        description="Generate a Friday report from tracked projects, current TV schedules, buyer activity, and review items."
+        helperText="Use the preview before you save or send. Low-confidence items still appear in their own section so the executive summary stays cleaner."
+        dataSource={preview.dataSource}
+      />
 
       <Card className="shadow-panel">
         <CardHeader><CardTitle>Select Friday Report Date</CardTitle></CardHeader>

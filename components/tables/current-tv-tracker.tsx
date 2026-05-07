@@ -14,6 +14,7 @@ import { Badge, StatusBadge } from "@/components/ui/badge";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Input, Select } from "@/components/ui/input";
 import { TeamNotesPanel } from "@/components/shared/team-notes-panel";
+import { FeedbackButton } from "@/components/layout/feedback-button";
 import { Table, Td, Th } from "@/components/ui/table";
 import type { CurrentTvSourceRecord } from "@/lib/current-tv-sources";
 import type { SavedViewRecord } from "@/lib/saved-views";
@@ -955,6 +956,15 @@ function ShowDetail({
         <div className="md:col-span-2">
           <div className="text-xs font-semibold uppercase text-muted-foreground">Notes</div>
           <p className="mt-1 text-sm leading-6">{show.notes ?? "No notes logged yet."}</p>
+          <div className="mt-3">
+            <FeedbackButton
+              variant="inline"
+              defaultType="data_issue"
+              entityType="CurrentShow"
+              entityId={show.id}
+              label="Report Data Issue"
+            />
+          </div>
         </div>
         <DetailItem label="Season" value={show.seasonNumber ? `Season ${show.seasonNumber}` : "TBD"} />
         <DetailItem label="Episodes" value={show.episodeCount?.toString() ?? "TBD"} />

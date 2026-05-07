@@ -16,7 +16,8 @@ export type AuditEntityType =
   | "TeamNote"
   | "Watchlist"
   | "Alert"
-  | "EmailPreference";
+  | "EmailPreference"
+  | "Feedback";
 
 export type AuditAction =
   | "created"

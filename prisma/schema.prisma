@@ -133,6 +133,28 @@ enum JobRunStatus {
   canceled
 }
 
+enum FeedbackType {
+  bug
+  data_issue
+  feature_request
+  confusion
+  other
+}
+
+enum FeedbackStatus {
+  new
+  triaged
+  in_progress
+  resolved
+  dismissed
+}
+
+enum FeedbackPriority {
+  low
+  medium
+  high
+}
+
 model Project {
   id                    String         @id @default(cuid())
   title                 String
@@ -716,5 +738,53 @@ model JobRun {
   @@index([lockKey])
   @@index([createdByUserId])
   @@index([createdByEmail])
+  @@index([createdAt])
+}
+
+model Feedback {
+  id            String           @id @default(cuid())
+  userId        String?
+  email         String?
+  page          String
+  entityType    String?
+  entityId      String?
+  feedbackType  FeedbackType
+  message       String
+  screenshotUrl String?
+  status        FeedbackStatus   @default(new)
+  priority      FeedbackPriority @default(medium)
+  internalNotes String?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  @@index([userId])
+  @@index([email])
+  @@index([page])
+  @@index([entityType, entityId])
+  @@index([feedbackType])
+  @@index([status])
+  @@index([priority])
+  @@index([createdAt])
+}
+
+model UsageEvent {
+  id         String   @id @default(cuid())
+  userId     String?
+  email      String?
+  eventType  String
+  page       String?
+  entityType String?
+  entityId   String?
+  key        String?
+  value      String?
+  metadataJson Json?
+  createdAt  DateTime @default(now())
+
+  @@index([userId])
+  @@index([email])
+  @@index([eventType])
+  @@index([page])
+  @@index([entityType, entityId])
+  @@index([key])
   @@index([createdAt])
 }

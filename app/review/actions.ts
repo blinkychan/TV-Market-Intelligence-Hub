@@ -19,6 +19,7 @@ import {
 } from "@/lib/data-quality";
 import { findBestDuplicateWarning, type DuplicateGroupRecord } from "@/lib/deduplication";
 import { extractStructuredTVData, extractStructuredTVDataWithAI, type StructuredTVExtraction } from "@/lib/extraction";
+import { recordUsageEvent } from "@/lib/feedback";
 import { ensureJobRunActive, withControlledJob } from "@/lib/job-control";
 import { readMockPreviewState, updateMockReviewArticle } from "@/lib/mock-preview-store";
 import { logOperationalEvent } from "@/lib/ops-log";
@@ -694,6 +695,17 @@ export async function updateArticleStatus(formData: FormData) {
           ? article.extractedDeduplicationNotes ?? "Marked duplicate during preview review."
           : article.extractedDeduplicationNotes
     }));
+
+    await recordUsageEvent({
+      eventType: "article_reviewed",
+      page: "/review",
+      entityType: "Article",
+      entityId: articleId,
+      value: extractionStatus,
+      metadata: {
+        mode: "mock"
+      }
+    });
   } else {
     await syncArticleMissingDataFromRecord(updated);
     await recordAuditLog({
@@ -705,6 +717,17 @@ export async function updateArticleStatus(formData: FormData) {
       newValueJson: updated,
       reason: `Article review status set to ${extractionStatus}.`,
       source: "review_queue"
+    });
+
+    await recordUsageEvent({
+      eventType: "article_reviewed",
+      page: "/review",
+      entityType: "Article",
+      entityId: updated.id,
+      value: extractionStatus,
+      metadata: {
+        mode: "database"
+      }
     });
   }
 
@@ -1386,6 +1409,27 @@ export async function createProjectFromArticle(formData: FormData) {
       linkedProjectTitle: existing.extractedProjectTitle ?? existing.headline,
       extractionStatus: "Approved"
     }));
+    await recordUsageEvent({
+      eventType: "article_reviewed",
+      page: "/review",
+      entityType: "Article",
+      entityId: articleId,
+      value: "Approved",
+      metadata: {
+        mode: "mock",
+        result: "project_linked"
+      }
+    });
+    await recordUsageEvent({
+      eventType: "project_created",
+      page: "/review",
+      entityType: "Project",
+      entityId: `mock-project-${articleId}`,
+      value: "mock_project",
+      metadata: {
+        mode: "mock"
+      }
+    });
     return;
   }
 
@@ -1510,6 +1554,17 @@ export async function createProjectFromArticle(formData: FormData) {
         reason: "Project created from approved article.",
         source: "review_queue"
       });
+      await recordUsageEvent({
+        eventType: "project_created",
+        page: "/review",
+        entityType: "Project",
+        entityId: project.id,
+        value: project.title,
+        metadata: {
+          mode: "database",
+          source: "article_review"
+        }
+      });
     }
   }
 
@@ -1534,6 +1589,18 @@ export async function createProjectFromArticle(formData: FormData) {
       newValueJson: updatedArticle,
       reason: "Article approved and linked to project.",
       source: "review_queue"
+    });
+    await recordUsageEvent({
+      eventType: "article_reviewed",
+      page: "/review",
+      entityType: "Article",
+      entityId: updatedArticle.id,
+      value: "Approved",
+      metadata: {
+        mode: "database",
+        result: "project_linked",
+        projectId
+      }
     });
   }
 
@@ -1597,6 +1664,17 @@ export async function createCurrentShowFromArticle(formData: FormData) {
       linkedShowTitle: existing.extractedProjectTitle ?? existing.headline,
       extractionStatus: "Approved"
     }));
+    await recordUsageEvent({
+      eventType: "article_reviewed",
+      page: "/review",
+      entityType: "Article",
+      entityId: articleId,
+      value: "Approved",
+      metadata: {
+        mode: "mock",
+        result: "current_show_linked"
+      }
+    });
     return;
   }
 
@@ -1693,6 +1771,18 @@ export async function createCurrentShowFromArticle(formData: FormData) {
       newValueJson: updatedArticle,
       reason: "Article approved and linked to current show.",
       source: "review_queue"
+    });
+    await recordUsageEvent({
+      eventType: "article_reviewed",
+      page: "/review",
+      entityType: "Article",
+      entityId: updatedArticle.id,
+      value: "Approved",
+      metadata: {
+        mode: "database",
+        result: "current_show_linked",
+        showId
+      }
     });
   }
 

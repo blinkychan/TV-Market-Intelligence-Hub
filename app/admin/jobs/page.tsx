@@ -1,6 +1,7 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { PageIntro } from "@/components/layout/page-intro";
 import { getAdminJobRuns } from "@/lib/job-control";
 import { requireAdminCapabilityAccess } from "@/lib/team-auth";
 import { formatDate } from "@/lib/utils";
@@ -34,13 +35,12 @@ export default async function AdminJobsPage() {
 
   return (
     <div className="space-y-6">
-      <section className="rounded-lg border bg-white p-6 shadow-panel">
-        <p className="text-sm font-semibold uppercase tracking-[0.2em] text-primary">Operational Controls</p>
-        <h1 className="mt-2 text-3xl font-semibold tracking-tight">Admin Jobs</h1>
-        <p className="mt-3 max-w-3xl text-muted-foreground">
-          See what operational work is running, inspect the inputs and results, cancel jobs where it is safe, and rerun failed operational jobs through the same guarded paths.
-        </p>
-      </section>
+      <PageIntro
+        eyebrow="Admin"
+        title="Background Jobs"
+        description="See what operational work is running, inspect the inputs and results, cancel jobs where it is safe, and rerun failed jobs through the same guarded paths."
+        helperText="Background jobs cover ingestion, extraction, email delivery, and reporting. If something feels stuck, start here before you reach for logs."
+      />
 
       <div className="grid gap-4 md:grid-cols-3">
         <Card className="shadow-panel">

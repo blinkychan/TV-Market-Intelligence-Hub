@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Activity, Database, FileText, Plus, Radio, Upload } from "lucide-react";
 import { addManualArticle, runMockRssIngestion, runRssIngestion, saveRssFeed } from "./actions";
+import { PageIntro } from "@/components/layout/page-intro";
 import { Badge } from "@/components/ui/badge";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -71,30 +72,16 @@ export default async function SourcesPage() {
 
   return (
     <div className="space-y-6">
-      <section className="rounded-lg border bg-white p-6 shadow-panel">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-primary">Source Management</p>
-            <h1 className="mt-2 text-3xl font-semibold tracking-tight">Sources / Ingestion Settings</h1>
-            <p className="mt-3 max-w-3xl text-muted-foreground">
-              Set up feed coverage, stage manual URLs, and capture backfill requests so incoming market intelligence has a clean home when ingestion is turned on.
-            </p>
-          </div>
-          <Badge className={dataSource === "database" ? "bg-emerald-50 text-emerald-700 ring-emerald-200" : "bg-amber-50 text-amber-800 ring-amber-200"}>
-            Data Source: {dataSource === "database" ? "Database" : "Mock Preview Data"}
-          </Badge>
-        </div>
-        {errorMessage ? (
-          <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-            {dataSource === "mock" ? `Preview data is active because the source registry could not be read: ${errorMessage}` : mockPreviewDisabledReason() ?? errorMessage}
-          </div>
-        ) : null}
-        {!canManageIngestion ? (
-          <div className="mt-4 rounded-md border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-900">
-            These controls are limited to admins. The temporary admin password can still unlock hosted ingestion while roles are being rolled out.
-          </div>
-        ) : null}
-      </section>
+      <PageIntro
+        eyebrow="Ingestion"
+        title="Sources & Intake"
+        description="Set up feed coverage, stage manual URLs, and capture backfill requests so incoming market intelligence has a clean home when ingestion is turned on."
+        helperText="Use this page to manage source health and manual intake. Keep live ingestion deliberate: RSS should reduce research time, not flood the team with noise."
+        dataSource={dataSource}
+        errorMessage={errorMessage ? (dataSource === "mock" ? `Demo preview is active because the source registry could not be read: ${errorMessage}` : mockPreviewDisabledReason() ?? errorMessage) : null}
+      >
+        {!canManageIngestion ? <Badge className="bg-sky-50 text-sky-700 ring-sky-200">Admin controls only</Badge> : null}
+      </PageIntro>
 
       <section className="grid gap-4 md:grid-cols-3">
         <Card className="shadow-panel">
@@ -274,7 +261,7 @@ export default async function SourcesPage() {
               <Upload className="h-4 w-4" /> Open CSV Import Manager
             </ButtonLink>
             <ButtonLink href="/sources/coverage" variant="secondary" className="w-full">
-              <Database className="h-4 w-4" /> Open Source Coverage
+              <Database className="h-4 w-4" /> Open Source Health
             </ButtonLink>
           </CardContent>
         </Card>

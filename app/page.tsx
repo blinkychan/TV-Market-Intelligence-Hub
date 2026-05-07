@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { ArrowUpRight, ClipboardList, Globe2, Radar, Sparkles, TrendingUp } from "lucide-react";
 import { BreakdownBars } from "@/components/charts/breakdown-bars";
+import { FirstRunGuide } from "@/components/layout/first-run-guide";
+import { PageIntro } from "@/components/layout/page-intro";
 import { Badge } from "@/components/ui/badge";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -57,34 +59,29 @@ export default async function DashboardPage({
 
   return (
     <div className="space-y-6">
-      <section className="rounded-lg border bg-white p-6 shadow-panel">
-        <div className="flex flex-col justify-between gap-5 lg:flex-row lg:items-end">
-          <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-primary">Executive Snapshot</p>
-            <h1 className="mt-2 text-3xl font-semibold tracking-tight">TV Market Intelligence Hub</h1>
-            <p className="mt-3 max-w-3xl text-muted-foreground">
-              A working market snapshot for development flow, airing schedules, buyer momentum, and review pressure.
-              Signals are marked as signals and stay traceable to underlying projects, shows, and review items.
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Badge className={snapshot.dataSource === "database" ? "bg-emerald-50 text-emerald-700 ring-emerald-200" : "bg-amber-50 text-amber-800 ring-amber-200"}>
-              Data Source: {snapshot.dataSource === "database" ? "Database" : "Mock Preview Data"}
-            </Badge>
-            <ButtonLink href="/development">
-              Open Tracker <ArrowUpRight className="h-4 w-4" />
-            </ButtonLink>
-          </div>
-        </div>
-        {snapshot.errorMessage ? (
-          <div className={`mt-4 rounded-md px-3 py-2 text-sm ${snapshot.dataSource === "mock" ? "border border-amber-200 bg-amber-50 text-amber-900" : "border border-rose-200 bg-rose-50 text-rose-900"}`}>
-            {snapshot.dataSource === "mock"
-              ? `Preview data is active because the dashboard database could not be read: ${snapshot.errorMessage}`
-              : snapshot.errorMessage}
-          </div>
-        ) : null}
-        <div className="mt-4 text-sm text-muted-foreground">Current lens: {getFilterSummary(filters)}</div>
-      </section>
+      <PageIntro
+        eyebrow="Executive Snapshot"
+        title="TV Market Intelligence Hub"
+        description="A working market snapshot for development flow, airing schedules, buyer momentum, and review pressure. Signals are labeled clearly as signals and stay traceable to underlying projects, shows, and review items."
+        helperText="Start on the dashboard for the broad picture, move into Review Queue to clean incoming records, and use Weekly Reports on Friday to package the week for the team."
+        dataSource={snapshot.dataSource}
+        errorMessage={
+          snapshot.errorMessage
+            ? snapshot.dataSource === "mock"
+              ? `Demo preview is active because the dashboard could not reach the live database: ${snapshot.errorMessage}`
+              : snapshot.errorMessage
+            : null
+        }
+      >
+        <Badge className="bg-slate-100 text-slate-700 ring-slate-200">Current lens: {getFilterSummary(filters)}</Badge>
+        <ButtonLink href="/development">
+          Open Tracker <ArrowUpRight className="h-4 w-4" />
+        </ButtonLink>
+      </PageIntro>
+
+      {(snapshot.dataSource === "mock" || metrics.every((metric) => metric.value === 0)) ? (
+        <FirstRunGuide demoMode={snapshot.dataSource === "mock"} />
+      ) : null}
 
       <Card className="shadow-panel">
         <CardHeader>

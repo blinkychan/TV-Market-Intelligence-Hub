@@ -13,26 +13,69 @@ import {
   Play,
   History,
   UsersRound,
-  Eye
+  Eye,
+  MessageSquarePlus
 } from "lucide-react";
 
-export const navItems = [
-  { href: "/", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/development", label: "Development Tracker", icon: ClipboardList },
-  { href: "/current-tv", label: "Current TV Tracker", icon: Radio },
-  { href: "/buyers", label: "Buyers", icon: Building2 },
-  { href: "/companies", label: "Companies & Talent", icon: UsersRound },
-  { href: "/review", label: "Article Review Queue", icon: FileText },
-  { href: "/duplicates", label: "Duplicate Review", icon: CopyMinus },
-  { href: "/watchlists", label: "Watchlists", icon: Eye },
-  { href: "/alerts", label: "Alerts", icon: Bell },
-  { href: "/settings/notifications", label: "Email Preferences", icon: Mail },
-  { href: "/weekly-reports", label: "Weekly Reports", icon: CalendarDays },
-  { href: "/sources", label: "Sources / Ingestion", icon: Settings },
-  { href: "/admin/status", label: "Admin Status", icon: ShieldCheck },
-  { href: "/admin/jobs", label: "Admin Jobs", icon: Play },
-  { href: "/admin/audit-log", label: "Admin Audit Log", icon: History }
+export type NavItem = {
+  href: string;
+  label: string;
+  icon: typeof LayoutDashboard;
+  adminOnly?: boolean;
+};
+
+export type NavGroup = {
+  label: string;
+  items: NavItem[];
+};
+
+export const navGroups: NavGroup[] = [
+  {
+    label: "Dashboard",
+    items: [{ href: "/", label: "Overview", icon: LayoutDashboard }]
+  },
+  {
+    label: "Development",
+    items: [
+      { href: "/development", label: "Development Tracker", icon: ClipboardList },
+      { href: "/buyers", label: "Buyers", icon: Building2 },
+      { href: "/companies", label: "Companies & Talent", icon: UsersRound }
+    ]
+  },
+  {
+    label: "Current TV",
+    items: [{ href: "/current-tv", label: "Current TV Tracker", icon: Radio }]
+  },
+  {
+    label: "Reports",
+    items: [
+      { href: "/weekly-reports", label: "Weekly Reports", icon: CalendarDays },
+      { href: "/watchlists", label: "Watchlists", icon: Eye },
+      { href: "/alerts", label: "Alerts", icon: Bell }
+    ]
+  },
+  {
+    label: "Ingestion",
+    items: [
+      { href: "/review", label: "Review Queue", icon: FileText },
+      { href: "/duplicates", label: "Duplicate Review", icon: CopyMinus },
+      { href: "/sources", label: "Sources & Intake", icon: Settings }
+    ]
+  },
+  {
+    label: "Admin",
+    items: [
+      { href: "/settings/notifications", label: "Email Preferences", icon: Mail, adminOnly: true },
+      { href: "/admin/feedback", label: "Feedback Inbox", icon: MessageSquarePlus, adminOnly: true },
+      { href: "/admin/status", label: "Admin Status", icon: ShieldCheck, adminOnly: true },
+      { href: "/admin/launch-checklist", label: "Launch Checklist", icon: ClipboardList, adminOnly: true },
+      { href: "/admin/jobs", label: "Background Jobs", icon: Play, adminOnly: true },
+      { href: "/admin/audit-log", label: "Audit Log", icon: History, adminOnly: true }
+    ]
+  }
 ];
+
+export const navItems = navGroups.flatMap((group) => group.items);
 
 export const statusTone: Record<string, string> = {
   sold: "bg-emerald-50 text-emerald-700 ring-emerald-200",

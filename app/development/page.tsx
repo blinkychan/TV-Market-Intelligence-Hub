@@ -1,6 +1,8 @@
 import { DevelopmentTable } from "@/components/tables/development-table";
 import type { DevelopmentRow } from "@/components/tables/development-table";
+import { PageIntro } from "@/components/layout/page-intro";
 import { calculateProjectConfidence, joinConfidenceReasons } from "@/lib/confidence";
+import { recordUsageEvent } from "@/lib/feedback";
 import { mockBuyerDetails } from "@/lib/mock-buyers";
 import { prisma } from "@/lib/prisma";
 import { getSavedViewsForPage } from "@/lib/saved-views";
@@ -41,14 +43,16 @@ function getMockRows(): DevelopmentRow[] {
   );
 }
 
-async function getDevelopmentRows(): Promise<DevelopmentRow[]> {
+async function getDevelopmentRows(): Promise<{ rows: DevelopmentRow[]; dataSource: "database" | "mock" }> {
   try {
     const projects = await prisma.project.findMany({
       include: { buyer: true, studio: true, productionCompanies: true, people: true },
       orderBy: [{ announcementDate: "desc" }, { title: "asc" }]
     });
 
-    return projects.map((project) => ({
+    return {
+      dataSource: "database",
+      rows: projects.map((project) => ({
       ...(() => {
         const confidence = calculateProjectConfidence({
           sourceReliability: project.sourcePublication ? "medium" : "low",
@@ -95,9 +99,10 @@ async function getDevelopmentRows(): Promise<DevelopmentRow[]> {
       sourcePublication: project.sourcePublication,
       needsReview: project.needsReview,
       notes: project.notes
-    }));
+      }))
+    };
   } catch {
-    return getMockRows();
+    return { rows: getMockRows(), dataSource: "mock" };
   }
 }
 
@@ -107,19 +112,29 @@ export default async function DevelopmentPage({
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
   const params = await searchParams;
-  const rows = await getDevelopmentRows();
+  const { rows, dataSource } = await getDevelopmentRows();
   const auth = await getCurrentUserContext();
   const savedViews = await getSavedViewsForPage("development_tracker").catch(() => []);
 
+  if (params.savedView || params.status || params.buyer || params.genre || params.confidence) {
+    await recordUsageEvent({
+      userId: auth.user?.id ?? null,
+      email: auth.user?.email ?? null,
+      eventType: params.savedView ? "saved_view_used" : "filter_used",
+      page: "/development",
+      value: params.savedView ?? JSON.stringify(params)
+    });
+  }
+
   return (
     <div className="space-y-5">
-      <section className="rounded-lg border bg-white p-6 shadow-panel">
-        <p className="text-sm font-semibold uppercase tracking-[0.2em] text-primary">Master Grid</p>
-        <h1 className="mt-2 text-3xl font-semibold tracking-tight">Development Tracker</h1>
-        <p className="mt-3 max-w-3xl text-muted-foreground">
-          Search and filter development projects by buyer, studio, genre, year, country, status, and market flags.
-        </p>
-      </section>
+      <PageIntro
+        eyebrow="Development"
+        title="Development Tracker"
+        description="Search and filter development projects by buyer, studio, genre, year, country, status, and market flags."
+        helperText="Use saved views for recurring team lenses. Low-confidence or stale projects are worth checking first before they make it into summaries."
+        dataSource={dataSource}
+      />
       <DevelopmentTable
         rows={rows}
         savedViewsData={savedViews}

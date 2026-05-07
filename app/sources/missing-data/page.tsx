@@ -201,7 +201,7 @@ export default async function MissingDataPage({ searchParams }: { searchParams: 
             <Table>
               <thead className="bg-slate-50">
                 <tr>
-                  <Th>Entity</Th>
+                  <Th>Record</Th>
                   <Th>Missing Field</Th>
                   <Th>Severity</Th>
                   <Th>Reason</Th>

@@ -212,7 +212,7 @@ export default async function SourceCoveragePage() {
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
             <p className="text-sm font-semibold uppercase tracking-[0.2em] text-primary">Coverage Health</p>
-            <h1 className="mt-2 text-3xl font-semibold tracking-tight">Source Coverage</h1>
+            <h1 className="mt-2 text-3xl font-semibold tracking-tight">Source Health</h1>
             <p className="mt-3 max-w-3xl text-muted-foreground">
               Track which sources are active, which ones are failing, and where article flow is thin before gaps make it into the dashboard.
             </p>
@@ -238,7 +238,7 @@ export default async function SourceCoveragePage() {
       <Card className="shadow-panel">
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
           <div>
-            <CardTitle>Coverage Grid</CardTitle>
+            <CardTitle>Source Health Grid</CardTitle>
             <p className="text-sm text-muted-foreground">Source-level ingestion status with last checks, yield, reliability, and failure pressure.</p>
           </div>
           <div className="flex gap-2">

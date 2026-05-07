@@ -142,7 +142,7 @@ export default async function AdminAuditLogPage({ searchParams }: { searchParams
                   <tr>
                     <Th>When</Th>
                     <Th>User</Th>
-                    <Th>Entity</Th>
+                    <Th>Record</Th>
                     <Th>Action</Th>
                     <Th>Reason</Th>
                     <Th>Source</Th>
