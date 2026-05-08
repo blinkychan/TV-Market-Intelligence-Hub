@@ -511,7 +511,7 @@ export async function approveDigDeeperFindings(
             changedByEmail: approvedByEmail,
             reason: `Applied Dig Deeper findings (run ${runId})`,
             source: "dig_deeper",
-            newValueJson: updates,
+            newValueJson: JSON.parse(JSON.stringify(updates)),
           },
         });
       } else if (entityType === "CurrentShow") {
