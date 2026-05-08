@@ -1,8 +1,12 @@
 node_modules
 .next
 .env
+.env.local
 prisma/dev.db
 prisma/dev.db-journal
 *.log
-.env
-.env.local
+tsconfig.tsbuildinfo
+.DS_Store
+
+# Old source files used during merge — not needed in repo
+old files/

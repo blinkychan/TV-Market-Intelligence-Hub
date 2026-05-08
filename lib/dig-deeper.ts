@@ -199,7 +199,7 @@ async function aiDigDeeper(
   contextText: string,
   relatedArticles: { headline: string; summary: string | null; url: string }[]
 ): Promise<string | null> {
-  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  const apiKey = process.env.GROQ_API_KEY?.trim();
   if (!apiKey) return null;
 
   const articleContext = relatedArticles
@@ -222,8 +222,9 @@ async function aiDigDeeper(
   });
 
   try {
-    const model = process.env.OPENAI_MODEL?.trim() || "gpt-4o-mini";
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    const model = process.env.OPENAI_MODEL?.trim() || "llama-3.3-70b-versatile";
+    const baseUrl = process.env.OPENAI_BASE_URL?.trim() || "https://api.groq.com/openai/v1";
+    const response = await fetch(`${baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
         "content-type": "application/json",

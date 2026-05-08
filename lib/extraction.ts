@@ -471,7 +471,7 @@ export async function extractStructuredTVDataWithAI(article: ArticleLike): Promi
   }
 
   const extractionInput = selectExtractionInput(article);
-  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  const apiKey = process.env.GROQ_API_KEY?.trim();
 
   if (!apiKey && isPreviewArticle(article)) {
     const fallback = await extractStructuredTVData(article, "placeholder");
@@ -488,11 +488,12 @@ export async function extractStructuredTVDataWithAI(article: ArticleLike): Promi
   }
 
   if (!apiKey) {
-    throw new Error("OPENAI_API_KEY is missing. Add it locally or in Vercel before running AI extraction.");
+    throw new Error("GROQ_API_KEY is missing. Add it locally or in Vercel before running AI extraction.");
   }
 
-  const model = process.env.OPENAI_MODEL?.trim() || "gpt-4o-mini";
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+  const model = process.env.OPENAI_MODEL?.trim() || "llama-3.3-70b-versatile";
+  const baseUrl = process.env.OPENAI_BASE_URL?.trim() || "https://api.groq.com/openai/v1";
+  const response = await fetch(`${baseUrl}/chat/completions`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -511,7 +512,7 @@ export async function extractStructuredTVDataWithAI(article: ArticleLike): Promi
 
   if (!response.ok) {
     const message = await response.text().catch(() => "");
-    throw new Error(`OpenAI extraction failed (${response.status}): ${message || "Unknown API error."}`);
+    throw new Error(`AI extraction failed (${response.status}): ${message || "Unknown API error."}`);
   }
 
   const payload = (await response.json()) as {
@@ -525,7 +526,7 @@ export async function extractStructuredTVDataWithAI(article: ArticleLike): Promi
   const parsed = parseJsonContent(content);
 
   if (!parsed) {
-    throw new Error("OpenAI extraction returned invalid JSON.");
+    throw new Error("AI extraction returned invalid JSON.");
   }
 
   const normalized = normalizeAiPayload(parsed, article, extractionInput);

@@ -129,7 +129,7 @@ function getRequiredEnvironmentChecks() {
 }
 
 function getOptionalEnvironmentChecks() {
-  return ["OPENAI_API_KEY", "RESEND_API_KEY", "REPORT_FROM_EMAIL", "CRON_SECRET"] as const;
+  return ["GROQ_API_KEY", "RESEND_API_KEY", "REPORT_FROM_EMAIL", "CRON_SECRET"] as const;
 }
 
 export async function getLaunchChecklistReport(): Promise<LaunchChecklistReport> {
@@ -161,8 +161,8 @@ export async function getLaunchChecklistReport(): Promise<LaunchChecklistReport>
   if (production && !authConfigured) {
     productionWarnings.push("Production warning: team authentication is disabled. The hosted app should not be shared until Supabase Auth is configured.");
   }
-  if (production && !configured("OPENAI_API_KEY")) {
-    productionWarnings.push("Production warning: OPENAI_API_KEY is missing, so real AI extraction will stay unavailable.");
+  if (production && !configured("GROQ_API_KEY")) {
+    productionWarnings.push("Production warning: GROQ_API_KEY is missing, so real AI extraction will stay unavailable.");
   }
   if (production && !configured("RESEND_API_KEY")) {
     productionWarnings.push("Production warning: RESEND_API_KEY is missing, so email delivery will stay in preview mode.");
@@ -393,7 +393,7 @@ export async function getLaunchChecklistReport(): Promise<LaunchChecklistReport>
   );
 
   try {
-    const aiKeyConfigured = configured("OPENAI_API_KEY");
+    const aiKeyConfigured = configured("GROQ_API_KEY");
 
     if (!aiKeyConfigured) {
       items.push(
@@ -401,7 +401,7 @@ export async function getLaunchChecklistReport(): Promise<LaunchChecklistReport>
           id: "ai-extraction",
           label: "AI extraction status",
           status: "warning",
-          explanation: "OPENAI_API_KEY is missing, so real AI extraction remains unavailable. Mock and heuristic review paths still work.",
+          explanation: "GROQ_API_KEY is missing, so real AI extraction remains unavailable. Mock and heuristic review paths still work.",
           href: "/review"
         })
       );

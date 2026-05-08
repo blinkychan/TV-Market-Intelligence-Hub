@@ -281,7 +281,7 @@ async function processArticle(
 
   try {
     // Run extraction (AI if key present, else placeholder)
-    const apiKey = process.env.OPENAI_API_KEY?.trim();
+    const apiKey = process.env.GROQ_API_KEY?.trim();
     const extracted = apiKey
       ? await extractStructuredTVDataWithAI(article)
       : await extractStructuredTVData(article, "placeholder");
