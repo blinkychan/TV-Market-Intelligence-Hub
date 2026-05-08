@@ -11,7 +11,7 @@ export const maxDuration = 300;
 const VALID_MODES: AutoPopulateMode[] = ["off", "cautious", "aggressive"];
 
 export async function POST(request: NextRequest) {
-  const ctx = await getCurrentUserContext(request as never).catch(() => null);
+  const ctx = await getCurrentUserContext().catch(() => null);
 
   let body: unknown;
   try {

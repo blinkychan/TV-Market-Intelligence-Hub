@@ -35,7 +35,7 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  const ctx = await getCurrentUserContext(request as never).catch(() => null);
+  const ctx = await getCurrentUserContext().catch(() => null);
   const email = ctx?.user?.email ?? "anonymous";
 
   let body: unknown;

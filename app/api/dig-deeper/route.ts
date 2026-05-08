@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 const VALID_ENTITY_TYPES: DigDeeperEntityType[] = ["Project", "CurrentShow", "Article"];
 
 export async function POST(request: NextRequest) {
-  const ctx = await getCurrentUserContext(request as never).catch(() => null);
+  const ctx = await getCurrentUserContext().catch(() => null);
 
   let body: unknown;
   try {

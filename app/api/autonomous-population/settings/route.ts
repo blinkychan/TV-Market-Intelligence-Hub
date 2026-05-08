@@ -37,7 +37,7 @@ export async function GET() {
 }
 
 export async function PUT(request: NextRequest) {
-  const ctx = await getCurrentUserContext(request as never).catch(() => null);
+  const ctx = await getCurrentUserContext().catch(() => null);
 
   let body: unknown;
   try {

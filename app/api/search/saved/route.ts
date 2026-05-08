@@ -17,7 +17,7 @@ import { getCurrentUserContext } from "@/lib/team-auth";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
-  const ctx = await getCurrentUserContext(request as never).catch(() => null);
+  const ctx = await getCurrentUserContext().catch(() => null);
   const email = ctx?.user?.email ?? undefined;
 
   try {
@@ -29,7 +29,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const ctx = await getCurrentUserContext(request as never).catch(() => null);
+  const ctx = await getCurrentUserContext().catch(() => null);
   const email = ctx?.user?.email ?? undefined;
 
   let body: unknown;
