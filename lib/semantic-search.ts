@@ -526,15 +526,13 @@ export async function rebuildAllSearchableText(): Promise<{
   // Process in batches of 100
   let cursor: string | undefined;
   while (true) {
-    const batch = await prisma.project.findMany({
-      take: 100,
-      ...(cursor !== undefined ? { skip: 1 as const, cursor: { id: cursor } } : {}),
-      include: { buyer: true, studio: true, productionCompanies: true, people: true },
-      orderBy: { id: "asc" },
-    });
-    if (!batch.length) break;
+    const projectQuery = cursor !== undefined
+      ? { take: 100, skip: 1, cursor: { id: cursor }, include: { buyer: true, studio: true, productionCompanies: true, people: true }, orderBy: { id: "asc" as const } }
+      : { take: 100, include: { buyer: true, studio: true, productionCompanies: true, people: true }, orderBy: { id: "asc" as const } };
+    const projectBatch = await prisma.project.findMany(projectQuery);
+    if (!projectBatch.length) break;
 
-    for (const p of batch) {
+    for (const p of projectBatch) {
       const text = buildProjectSearchableText(p);
       await prisma.project.update({
         where: { id: p.id },
@@ -542,19 +540,18 @@ export async function rebuildAllSearchableText(): Promise<{
       });
       projects++;
     }
-    cursor = batch[batch.length - 1].id;
+    cursor = projectBatch[projectBatch.length - 1].id;
   }
 
   cursor = undefined;
   while (true) {
-    const batch = await prisma.currentShow.findMany({
-      take: 100,
-      ...(cursor !== undefined ? { skip: 1 as const, cursor: { id: cursor } } : {}),
-      orderBy: { id: "asc" },
-    });
-    if (!batch.length) break;
+    const showQuery = cursor !== undefined
+      ? { take: 100, skip: 1, cursor: { id: cursor }, orderBy: { id: "asc" as const } }
+      : { take: 100, orderBy: { id: "asc" as const } };
+    const showBatch = await prisma.currentShow.findMany(showQuery);
+    if (!showBatch.length) break;
 
-    for (const s of batch) {
+    for (const s of showBatch) {
       const text = buildCurrentShowSearchableText(s);
       await prisma.currentShow.update({
         where: { id: s.id },
@@ -562,19 +559,18 @@ export async function rebuildAllSearchableText(): Promise<{
       });
       shows++;
     }
-    cursor = batch[batch.length - 1].id;
+    cursor = showBatch[showBatch.length - 1].id;
   }
 
   cursor = undefined;
   while (true) {
-    const batch = await prisma.article.findMany({
-      take: 100,
-      ...(cursor !== undefined ? { skip: 1 as const, cursor: { id: cursor } } : {}),
-      orderBy: { id: "asc" },
-    });
-    if (!batch.length) break;
+    const articleQuery = cursor !== undefined
+      ? { take: 100, skip: 1, cursor: { id: cursor }, orderBy: { id: "asc" as const } }
+      : { take: 100, orderBy: { id: "asc" as const } };
+    const articleBatch = await prisma.article.findMany(articleQuery);
+    if (!articleBatch.length) break;
 
-    for (const a of batch) {
+    for (const a of articleBatch) {
       const text = buildArticleSearchableText(a);
       await prisma.article.update({
         where: { id: a.id },
@@ -582,7 +578,7 @@ export async function rebuildAllSearchableText(): Promise<{
       });
       articles++;
     }
-    cursor = batch[batch.length - 1].id;
+    cursor = articleBatch[articleBatch.length - 1].id;
   }
 
   logOperationalEvent("info", "Rebuilt all searchable text", { projects, shows, articles });
