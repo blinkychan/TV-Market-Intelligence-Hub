@@ -331,22 +331,22 @@ async function runBodyFetchStep(
   let skipped = 0;
 
   try {
-    // Find articles that need body fetch: have a sourceUrl, no body text yet
+    // Find articles that need body fetch: have a url, no body text yet
     const candidates = await prisma.article.findMany({
       where: {
-        sourceUrl: { not: null },
+        url: { not: "" },
         bodyText: null,
         bodyFetchStatus: { in: ["not_fetched", null] as never[] },
       },
       orderBy: { publishedDate: "desc" },
       take: limit,
-      select: { id: true, sourceUrl: true },
+      select: { id: true, url: true },
     });
 
     for (const article of candidates) {
-      if (!article.sourceUrl) { skipped++; continue; }
+      if (!article.url) { skipped++; continue; }
       try {
-        const result = await fetchArticleBody(article.sourceUrl);
+        const result = await fetchArticleBody(article.url);
         await prisma.article.update({
           where: { id: article.id },
           data: {
@@ -398,7 +398,7 @@ async function runAIExtractionStep(
         headline: true,
         summary: true,
         bodyText: true,
-        sourceUrl: true,
+        url: true,
         publication: true,
         publishedDate: true,
       },
