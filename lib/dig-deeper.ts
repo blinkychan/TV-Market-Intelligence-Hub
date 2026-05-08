@@ -75,7 +75,7 @@ async function findRelatedArticles(
     publication: string | null;
     publishedDate: Date | null;
     summary: string | null;
-    extractedStatus: string;
+    extractedStatus: string | null;
     confidenceScore: number | null;
   }[]
 > {
@@ -141,7 +141,7 @@ async function findSimilarProjects(
 
 function detectStatusProgression(
   currentStatus: string,
-  articles: { headline: string; extractedStatus: string }[]
+  articles: { headline: string; extractedStatus: string | null }[]
 ): DigDeeperFinding | null {
   const statusKeywords: Record<string, string> = {
     pilot: "pilot_order",
