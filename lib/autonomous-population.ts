@@ -68,8 +68,8 @@ async function findExistingProject(title: string): Promise<string | null> {
   const match = await prisma.project.findFirst({
     where: {
       OR: [
-        { title: { equals: title, mode: "insensitive" } },
-        { aliases: { contains: normalized, mode: "insensitive" } },
+        { title: { equals: title, mode: "insensitive" as const } },
+        { aliases: { contains: normalized, mode: "insensitive" as const } },
       ],
       archivedAt: null,
     },
@@ -82,8 +82,8 @@ async function findExistingShow(title: string, network?: string | null): Promise
   if (!title) return null;
   const match = await prisma.currentShow.findFirst({
     where: {
-      title: { equals: title, mode: "insensitive" },
-      ...(network ? { networkOrPlatform: { equals: network, mode: "insensitive" } } : {}),
+      title: { equals: title, mode: "insensitive" as const },
+      ...(network ? { networkOrPlatform: { equals: network, mode: "insensitive" as const } } : {}),
       archivedAt: null,
     },
     select: { id: true },
@@ -104,7 +104,7 @@ async function createDraftProject(
   let buyerId: string | null = null;
   if (extracted.buyer) {
     const buyer = await prisma.buyer.findFirst({
-      where: { name: { equals: extracted.buyer, mode: "insensitive" } },
+      where: { name: { equals: extracted.buyer, mode: "insensitive" as const } },
     });
     if (buyer) {
       buyerId = buyer.id;

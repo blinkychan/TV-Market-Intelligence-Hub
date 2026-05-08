@@ -346,11 +346,11 @@ async function searchCurrentShows(
   const shows = await prisma.currentShow.findMany({
     where: {
       OR: [
-        { title: { contains: rawQuery, mode: "insensitive" } },
-        { genre: { contains: rawQuery, mode: "insensitive" } },
-        { networkOrPlatform: { contains: rawQuery, mode: "insensitive" } },
-        { tags: { contains: rawQuery, mode: "insensitive" } },
-        { searchableText: { contains: rawQuery, mode: "insensitive" } },
+        { title: { contains: rawQuery, mode: "insensitive" as const } },
+        { genre: { contains: rawQuery, mode: "insensitive" as const } },
+        { networkOrPlatform: { contains: rawQuery, mode: "insensitive" as const } },
+        { tags: { contains: rawQuery, mode: "insensitive" as const } },
+        { searchableText: { contains: rawQuery, mode: "insensitive" as const } },
         ...(queryTokens.slice(0, 3).map((t) => ({
           searchableText: { contains: t, mode: "insensitive" as const },
         }))),
@@ -399,13 +399,13 @@ async function searchArticles(
   const articles = await prisma.article.findMany({
     where: {
       OR: [
-        { headline: { contains: rawQuery, mode: "insensitive" } },
-        { summary: { contains: rawQuery, mode: "insensitive" } },
-        { extractedProjectTitle: { contains: rawQuery, mode: "insensitive" } },
-        { extractedLogline: { contains: rawQuery, mode: "insensitive" } },
-        { extractedGenre: { contains: rawQuery, mode: "insensitive" } },
-        { tags: { contains: rawQuery, mode: "insensitive" } },
-        { searchableText: { contains: rawQuery, mode: "insensitive" } },
+        { headline: { contains: rawQuery, mode: "insensitive" as const } },
+        { summary: { contains: rawQuery, mode: "insensitive" as const } },
+        { extractedProjectTitle: { contains: rawQuery, mode: "insensitive" as const } },
+        { extractedLogline: { contains: rawQuery, mode: "insensitive" as const } },
+        { extractedGenre: { contains: rawQuery, mode: "insensitive" as const } },
+        { tags: { contains: rawQuery, mode: "insensitive" as const } },
+        { searchableText: { contains: rawQuery, mode: "insensitive" as const } },
         ...(queryTokens.slice(0, 3).map((t) => ({
           searchableText: { contains: t, mode: "insensitive" as const },
         }))),

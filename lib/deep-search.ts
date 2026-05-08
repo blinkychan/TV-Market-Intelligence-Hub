@@ -437,18 +437,18 @@ async function deepSearchShows(
   const shows = await prisma.currentShow.findMany({
     where: {
       OR: [
-        { title: { contains: rawQuery, mode: "insensitive" } },
-        { genre: { contains: rawQuery, mode: "insensitive" } },
-        { networkOrPlatform: { contains: rawQuery, mode: "insensitive" } },
-        { tags: { contains: rawQuery, mode: "insensitive" } },
-        { searchableText: { contains: rawQuery, mode: "insensitive" } },
+        { title: { contains: rawQuery, mode: "insensitive" as const } },
+        { genre: { contains: rawQuery, mode: "insensitive" as const } },
+        { networkOrPlatform: { contains: rawQuery, mode: "insensitive" as const } },
+        { tags: { contains: rawQuery, mode: "insensitive" as const } },
+        { searchableText: { contains: rawQuery, mode: "insensitive" as const } },
         ...searchTokens.slice(0, 5).map((t) => ({
           searchableText: { contains: t, mode: "insensitive" as const },
         })),
       ],
       archivedAt: null,
-      ...(genre ? { genre: { contains: genre, mode: "insensitive" } } : {}),
-      ...(buyer ? { networkOrPlatform: { contains: buyer, mode: "insensitive" } } : {}),
+      ...(genre ? { genre: { contains: genre, mode: "insensitive" as const } } : {}),
+      ...(buyer ? { networkOrPlatform: { contains: buyer, mode: "insensitive" as const } } : {}),
       ...(yearFrom || yearTo
         ? {
             premiereDate: {
@@ -527,17 +527,17 @@ async function deepSearchArticles(
   const articles = await prisma.article.findMany({
     where: {
       OR: [
-        { headline: { contains: rawQuery, mode: "insensitive" } },
-        { summary: { contains: rawQuery, mode: "insensitive" } },
-        { extractedLogline: { contains: rawQuery, mode: "insensitive" } },
-        { extractedProjectTitle: { contains: rawQuery, mode: "insensitive" } },
-        { searchableText: { contains: rawQuery, mode: "insensitive" } },
+        { headline: { contains: rawQuery, mode: "insensitive" as const } },
+        { summary: { contains: rawQuery, mode: "insensitive" as const } },
+        { extractedLogline: { contains: rawQuery, mode: "insensitive" as const } },
+        { extractedProjectTitle: { contains: rawQuery, mode: "insensitive" as const } },
+        { searchableText: { contains: rawQuery, mode: "insensitive" as const } },
         ...searchTokens.slice(0, 5).map((t) => ({
           searchableText: { contains: t, mode: "insensitive" as const },
         })),
       ],
       archivedAt: null,
-      ...(buyer ? { extractedBuyer: { contains: buyer, mode: "insensitive" } } : {}),
+      ...(buyer ? { extractedBuyer: { contains: buyer, mode: "insensitive" as const } } : {}),
       ...(yearFrom || yearTo
         ? {
             publishedDate: {

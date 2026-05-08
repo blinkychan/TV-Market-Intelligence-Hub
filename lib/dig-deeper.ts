@@ -87,10 +87,10 @@ async function findRelatedArticles(
       AND: [
         {
           OR: [
-            { headline: { contains: primaryTerm, mode: "insensitive" } },
-            { summary: { contains: primaryTerm, mode: "insensitive" } },
-            { extractedProjectTitle: { contains: primaryTerm, mode: "insensitive" } },
-            { searchableText: { contains: primaryTerm, mode: "insensitive" } },
+            { headline: { contains: primaryTerm, mode: "insensitive" as const } },
+            { summary: { contains: primaryTerm, mode: "insensitive" as const } },
+            { extractedProjectTitle: { contains: primaryTerm, mode: "insensitive" as const } },
+            { searchableText: { contains: primaryTerm, mode: "insensitive" as const } },
           ],
         },
         { id: { notIn: excludeIds } },
@@ -126,8 +126,8 @@ async function findSimilarProjects(
         { archivedAt: null },
         {
           OR: [
-            genre ? { genre: { equals: genre, mode: "insensitive" } } : {},
-            { searchableText: { contains: title.split(" ")[0], mode: "insensitive" } },
+            genre ? { genre: { equals: genre, mode: "insensitive" as const } } : {},
+            { searchableText: { contains: title.split(" ")[0], mode: "insensitive" as const } },
           ].filter((c) => Object.keys(c).length > 0),
         },
       ],
