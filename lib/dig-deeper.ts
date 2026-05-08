@@ -495,7 +495,7 @@ export async function approveDigDeeperFindings(
       if (entityType === "Project") {
         await prisma.project.update({
           where: { id: run.entityId },
-          data: { ...updates as never, needsReview: true, updatedAt: new Date() },
+          data: { ...(updates as never), needsReview: true, updatedAt: new Date() },
         });
         await prisma.auditLog.create({
           data: {
@@ -511,7 +511,7 @@ export async function approveDigDeeperFindings(
       } else if (entityType === "CurrentShow") {
         await prisma.currentShow.update({
           where: { id: run.entityId },
-          data: { ...updates as never, needsVerification: true, updatedAt: new Date() },
+          data: { ...(updates as never), needsVerification: true, updatedAt: new Date() },
         });
       }
 
