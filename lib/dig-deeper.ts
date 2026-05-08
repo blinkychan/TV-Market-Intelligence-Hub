@@ -493,10 +493,16 @@ export async function approveDigDeeperFindings(
       const entityType = run.entityType as DigDeeperEntityType;
 
       if (entityType === "Project") {
-        await prisma.project.update({
-          where: { id: run.entityId },
-          data: { ...(updates as never), needsReview: true, updatedAt: new Date() },
-        });
+        await prisma.$executeRawUnsafe(
+          `UPDATE "Project" SET "needsReview" = true, "updatedAt" = NOW() WHERE id = $1`,
+          run.entityId
+        );
+        for (const [field, value] of Object.entries(updates)) {
+          await prisma.$executeRawUnsafe(
+            `UPDATE "Project" SET "${field}" = $1, "updatedAt" = NOW() WHERE id = $2`,
+            value, run.entityId
+          ).catch(() => undefined);
+        }
         await prisma.auditLog.create({
           data: {
             entityType: "Project",
@@ -509,10 +515,16 @@ export async function approveDigDeeperFindings(
           },
         });
       } else if (entityType === "CurrentShow") {
-        await prisma.currentShow.update({
-          where: { id: run.entityId },
-          data: { ...(updates as never), needsVerification: true, updatedAt: new Date() },
-        });
+        await prisma.$executeRawUnsafe(
+          `UPDATE "CurrentShow" SET "needsVerification" = true, "updatedAt" = NOW() WHERE id = $1`,
+          run.entityId
+        );
+        for (const [field, value] of Object.entries(updates)) {
+          await prisma.$executeRawUnsafe(
+            `UPDATE "CurrentShow" SET "${field}" = $1, "updatedAt" = NOW() WHERE id = $2`,
+            value, run.entityId
+          ).catch(() => undefined);
+        }
       }
 
       await prisma.digDeeperRun.update({
