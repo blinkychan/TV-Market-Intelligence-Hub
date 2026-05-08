@@ -335,7 +335,7 @@ async function runBodyFetchStep(
     const candidates = await prisma.article.findMany({
       where: {
         url: { not: "" },
-        bodyText: null,
+        extractedText: null,
         bodyFetchStatus: { in: ["not_fetched", null] as never[] },
       },
       orderBy: { publishedDate: "desc" },
@@ -350,7 +350,7 @@ async function runBodyFetchStep(
         await prisma.article.update({
           where: { id: article.id },
           data: {
-            bodyText: result.extractedText,
+            extractedText: result.extractedText,
             bodyFetchStatus: result.status as never,
             bodyFetchedAt: result.fetchedAt,
             paywallLikely: result.paywallLikely,
@@ -385,11 +385,11 @@ async function runAIExtractionStep(
     const candidates = await prisma.article.findMany({
       where: {
         OR: [
-          { bodyText: { not: null } },
+          { extractedText: { not: null } },
           { summary: { not: null } },
         ],
-        extractedData: null,
-        isProcessed: { not: true },
+        extractedProjectTitle: null,
+        archivedAt: null,
       },
       orderBy: { publishedDate: "desc" },
       take: limit,
@@ -397,7 +397,7 @@ async function runAIExtractionStep(
         id: true,
         headline: true,
         summary: true,
-        bodyText: true,
+        extractedText: true,
         url: true,
         publication: true,
         publishedDate: true,
@@ -410,10 +410,10 @@ async function runAIExtractionStep(
         await prisma.article.update({
           where: { id: article.id },
           data: {
-            extractedData: extraction as never,
+            extractedStructuredDataJson: extraction as never,
             confidenceScore: extraction.confidenceScore,
             confidenceLevel: extraction.confidenceLevel,
-            isProcessed: true,
+            extractedProjectTitle: extraction.title ?? "attempted",
           },
         });
         ran++;
@@ -422,7 +422,7 @@ async function runAIExtractionStep(
         // Mark as attempted to avoid infinite retry loops
         await prisma.article.update({
           where: { id: article.id },
-          data: { isProcessed: true },
+          data: { extractedProjectTitle: "extraction_failed" },
         }).catch(() => undefined);
       }
     }
