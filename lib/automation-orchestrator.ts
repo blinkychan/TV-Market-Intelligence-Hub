@@ -412,7 +412,6 @@ async function runAIExtractionStep(
           data: {
             extractedStructuredDataJson: extraction as never,
             confidenceScore: extraction.confidenceScore,
-            confidenceLevel: extraction.confidenceLevel,
             extractedProjectTitle: extraction.title ?? "attempted",
           },
         });
