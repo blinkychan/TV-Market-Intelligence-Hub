@@ -519,7 +519,7 @@ export async function runAutomation(options: {
         jobType: "automation_orchestrator",
         lockKey: LOCK_KEY,
         status: "running",
-        triggeredBy,
+        createdByEmail: triggeredBy ?? null,
       },
     });
     lockId = lock.id;
