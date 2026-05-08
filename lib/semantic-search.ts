@@ -528,7 +528,7 @@ export async function rebuildAllSearchableText(): Promise<{
   while (true) {
     const batch = await prisma.project.findMany({
       take: 100,
-      ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
+      ...(cursor !== undefined ? { skip: 1 as const, cursor: { id: cursor } } : {}),
       include: { buyer: true, studio: true, productionCompanies: true, people: true },
       orderBy: { id: "asc" },
     });
@@ -549,7 +549,7 @@ export async function rebuildAllSearchableText(): Promise<{
   while (true) {
     const batch = await prisma.currentShow.findMany({
       take: 100,
-      ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
+      ...(cursor !== undefined ? { skip: 1 as const, cursor: { id: cursor } } : {}),
       orderBy: { id: "asc" },
     });
     if (!batch.length) break;
@@ -569,7 +569,7 @@ export async function rebuildAllSearchableText(): Promise<{
   while (true) {
     const batch = await prisma.article.findMany({
       take: 100,
-      ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
+      ...(cursor !== undefined ? { skip: 1 as const, cursor: { id: cursor } } : {}),
       orderBy: { id: "asc" },
     });
     if (!batch.length) break;
