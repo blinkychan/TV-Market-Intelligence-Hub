@@ -275,7 +275,7 @@ export function mockDeepSearchResults(
 }
 
 export function mockPitchCompareResult(pitch: string): PitchCompareResult {
-  const similar = mockDeepSearchResults(pitch, { includeStale: true });
+  const similar = mockDeepSearchResults(pitch, { query: pitch, includeStale: true });
 
   return {
     dataSource: "mock",
