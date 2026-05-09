@@ -526,9 +526,10 @@ export async function rebuildAllSearchableText(): Promise<{
   // Process in batches of 100
   let cursor: string | undefined;
   while (true) {
-    const projectBatch = await (cursor !== undefined
-      ? prisma.project.findMany({ take: 100, skip: 1, cursor: { id: cursor }, include: { buyer: true, studio: true, productionCompanies: true, people: true }, orderBy: { id: "asc" } })
-      : prisma.project.findMany({ take: 100, include: { buyer: true, studio: true, productionCompanies: true, people: true }, orderBy: { id: "asc" } }));
+    const _pCursor = cursor;
+    const projectBatch = _pCursor
+      ? await prisma.project.findMany({ take: 100, skip: 1, cursor: { id: _pCursor }, include: { buyer: true, studio: true, productionCompanies: true, people: true }, orderBy: { id: "asc" } })
+      : await prisma.project.findMany({ take: 100, include: { buyer: true, studio: true, productionCompanies: true, people: true }, orderBy: { id: "asc" } });
     if (!projectBatch.length) break;
 
     for (const p of projectBatch) {
@@ -544,9 +545,10 @@ export async function rebuildAllSearchableText(): Promise<{
 
   cursor = undefined;
   while (true) {
-    const showBatch = await (cursor !== undefined
-      ? prisma.currentShow.findMany({ take: 100, skip: 1, cursor: { id: cursor }, orderBy: { id: "asc" } })
-      : prisma.currentShow.findMany({ take: 100, orderBy: { id: "asc" } }));
+    const _sCursor = cursor;
+    const showBatch = _sCursor
+      ? await prisma.currentShow.findMany({ take: 100, skip: 1, cursor: { id: _sCursor }, orderBy: { id: "asc" } })
+      : await prisma.currentShow.findMany({ take: 100, orderBy: { id: "asc" } });
     if (!showBatch.length) break;
 
     for (const s of showBatch) {
@@ -562,9 +564,10 @@ export async function rebuildAllSearchableText(): Promise<{
 
   cursor = undefined;
   while (true) {
-    const articleBatch = await (cursor !== undefined
-      ? prisma.article.findMany({ take: 100, skip: 1, cursor: { id: cursor }, orderBy: { id: "asc" } })
-      : prisma.article.findMany({ take: 100, orderBy: { id: "asc" } }));
+    const _aCursor = cursor;
+    const articleBatch = _aCursor
+      ? await prisma.article.findMany({ take: 100, skip: 1, cursor: { id: _aCursor }, orderBy: { id: "asc" } })
+      : await prisma.article.findMany({ take: 100, orderBy: { id: "asc" } });
     if (!articleBatch.length) break;
 
     for (const a of articleBatch) {
