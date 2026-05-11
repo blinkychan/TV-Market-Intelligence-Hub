@@ -88,14 +88,14 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     <html lang="en">
       <body>
         <div className="min-h-screen bg-background">
-          <aside className="fixed inset-y-0 left-0 z-20 hidden w-72 border-r bg-slate-950 text-white lg:block">
-            <div className="flex h-20 items-center border-b border-white/10 px-6">
+          <aside className="fixed inset-y-0 left-0 z-20 hidden w-72 border-r bg-slate-950 text-white lg:flex lg:flex-col">
+            <div className="flex h-20 shrink-0 items-center border-b border-white/10 px-6">
               <div>
                 <div className="text-sm font-semibold uppercase tracking-[0.18em] text-teal-200">Local Intel</div>
                 <div className="text-xl font-semibold">TV Market Hub</div>
               </div>
             </div>
-            <nav className="space-y-6 px-3 py-5">
+            <nav className="flex-1 overflow-y-auto space-y-6 px-3 py-5">
               {visibleGroups.map((group) => (
                 <div key={group.label}>
                   <div className="px-3 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">{group.label}</div>
