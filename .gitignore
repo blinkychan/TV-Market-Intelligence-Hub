@@ -10,3 +10,4 @@ tsconfig.tsbuildinfo
 
 # Old source files used during merge — not needed in repo
 old files/
+.vercel
