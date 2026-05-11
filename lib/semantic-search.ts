@@ -526,10 +526,12 @@ export async function rebuildAllSearchableText(): Promise<{
   // Process in batches of 100
   let cursor: string | undefined;
   while (true) {
-    const _pCursor: string | undefined = cursor;
-    const projectBatch = _pCursor
-      ? await prisma.project.findMany({ take: 100, skip: 1, cursor: { id: _pCursor }, include: { buyer: true, studio: true, productionCompanies: true, people: true }, orderBy: { id: "asc" } })
-      : await prisma.project.findMany({ take: 100, include: { buyer: true, studio: true, productionCompanies: true, people: true }, orderBy: { id: "asc" } });
+    let projectBatch: Awaited<ReturnType<typeof prisma.project.findMany>>;
+    if (cursor) {
+      projectBatch = await prisma.project.findMany({ take: 100, skip: 1, cursor: { id: cursor }, include: { buyer: true, studio: true, productionCompanies: true, people: true }, orderBy: { id: "asc" } });
+    } else {
+      projectBatch = await prisma.project.findMany({ take: 100, include: { buyer: true, studio: true, productionCompanies: true, people: true }, orderBy: { id: "asc" } });
+    }
     if (!projectBatch.length) break;
 
     for (const p of projectBatch) {
@@ -545,10 +547,12 @@ export async function rebuildAllSearchableText(): Promise<{
 
   cursor = undefined;
   while (true) {
-    const _sCursor: string | undefined = cursor;
-    const showBatch = _sCursor
-      ? await prisma.currentShow.findMany({ take: 100, skip: 1, cursor: { id: _sCursor }, orderBy: { id: "asc" } })
-      : await prisma.currentShow.findMany({ take: 100, orderBy: { id: "asc" } });
+    let showBatch: Awaited<ReturnType<typeof prisma.currentShow.findMany>>;
+    if (cursor) {
+      showBatch = await prisma.currentShow.findMany({ take: 100, skip: 1, cursor: { id: cursor }, orderBy: { id: "asc" } });
+    } else {
+      showBatch = await prisma.currentShow.findMany({ take: 100, orderBy: { id: "asc" } });
+    }
     if (!showBatch.length) break;
 
     for (const s of showBatch) {
@@ -564,10 +568,12 @@ export async function rebuildAllSearchableText(): Promise<{
 
   cursor = undefined;
   while (true) {
-    const _aCursor: string | undefined = cursor;
-    const articleBatch = _aCursor
-      ? await prisma.article.findMany({ take: 100, skip: 1, cursor: { id: _aCursor }, orderBy: { id: "asc" } })
-      : await prisma.article.findMany({ take: 100, orderBy: { id: "asc" } });
+    let articleBatch: Awaited<ReturnType<typeof prisma.article.findMany>>;
+    if (cursor) {
+      articleBatch = await prisma.article.findMany({ take: 100, skip: 1, cursor: { id: cursor }, orderBy: { id: "asc" } });
+    } else {
+      articleBatch = await prisma.article.findMany({ take: 100, orderBy: { id: "asc" } });
+    }
     if (!articleBatch.length) break;
 
     for (const a of articleBatch) {
