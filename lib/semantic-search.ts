@@ -526,7 +526,7 @@ export async function rebuildAllSearchableText(): Promise<{
   // Process in batches of 100
   let cursor: string | undefined;
   while (true) {
-    const _pCursor = cursor;
+    const _pCursor: string | undefined = cursor;
     const projectBatch = _pCursor
       ? await prisma.project.findMany({ take: 100, skip: 1, cursor: { id: _pCursor }, include: { buyer: true, studio: true, productionCompanies: true, people: true }, orderBy: { id: "asc" } })
       : await prisma.project.findMany({ take: 100, include: { buyer: true, studio: true, productionCompanies: true, people: true }, orderBy: { id: "asc" } });
@@ -545,7 +545,7 @@ export async function rebuildAllSearchableText(): Promise<{
 
   cursor = undefined;
   while (true) {
-    const _sCursor = cursor;
+    const _sCursor: string | undefined = cursor;
     const showBatch = _sCursor
       ? await prisma.currentShow.findMany({ take: 100, skip: 1, cursor: { id: _sCursor }, orderBy: { id: "asc" } })
       : await prisma.currentShow.findMany({ take: 100, orderBy: { id: "asc" } });
@@ -564,7 +564,7 @@ export async function rebuildAllSearchableText(): Promise<{
 
   cursor = undefined;
   while (true) {
-    const _aCursor = cursor;
+    const _aCursor: string | undefined = cursor;
     const articleBatch = _aCursor
       ? await prisma.article.findMany({ take: 100, skip: 1, cursor: { id: _aCursor }, orderBy: { id: "asc" } })
       : await prisma.article.findMany({ take: 100, orderBy: { id: "asc" } });
